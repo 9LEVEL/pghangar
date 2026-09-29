@@ -1,0 +1,7 @@
+# artefatos
+/bin/
+/copia-banco
+
+# segredos e dados: nunca versionar
+*.pgpass
+estado.db*
