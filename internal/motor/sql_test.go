@@ -158,3 +158,25 @@ func TestArgsDump(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+// Uma extensão mais antiga no destino pede atenção; mais nova é só uma informação. O caso que
+// motivou: vector 0.8.6 na origem e 0.8.1 no destino; pg_stat_statements 1.10 e 1.12.
+func TestAvisoExtensaoPelaVersao(t *testing.T) {
+	if txt, atencao := avisoExtensao("vector", "0.8.6", "0.8.1"); !atencao || !strings.Contains(txt, "mais antiga") {
+		t.Fatalf("vector mais antiga no destino: %v %q", atencao, txt)
+	}
+	if txt, atencao := avisoExtensao("pg_stat_statements", "1.10", "1.12"); atencao || !strings.Contains(txt, "mais nova") {
+		t.Fatalf("pg_stat_statements mais nova no destino: %v %q", atencao, txt)
+	}
+	if _, atencao := avisoExtensao("x", "1.0beta", "1.0"); !atencao {
+		t.Fatal("sem dar para comparar, pede atenção")
+	}
+	for _, c := range []struct {
+		a, b string
+		quer int
+	}{{"1.10", "1.9", 1}, {"0.8.1", "0.8.6", -1}, {"1.2", "1.2.0", 0}, {"2.0-1", "2.0-2", -1}} {
+		if got, ok := compararVersoes(c.a, c.b); !ok || got != c.quer {
+			t.Fatalf("%s × %s: %d %v", c.a, c.b, got, ok)
+		}
+	}
+}

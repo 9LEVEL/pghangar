@@ -270,7 +270,7 @@ func (r *corrida) dumpBlocos(ctx context.Context) error {
 			}
 		}
 		r.d.logf("o dump caiu (%v): retoma em %s, de onde parou (%d de %d tabelas prontas)", err, esperas[tentativa], prontas, len(estado.Tabelas))
-		r.e.Avisos = append(r.e.Avisos, fmt.Sprintf("o dump caiu e retomou de onde parou (tentativa %d): %v", tentativa+2, err))
+		r.e.Notas = append(r.e.Notas, fmt.Sprintf("o dump caiu e retomou de onde parou (tentativa %d): %v", tentativa+2, err))
 		r.gravar()
 		select {
 		case <-ctx.Done():

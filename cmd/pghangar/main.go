@@ -243,6 +243,9 @@ func rodarPerfil(args []string) error {
 	for _, a := range p.Avisos {
 		fmt.Println("aviso:", a)
 	}
+	for _, a := range p.Notas {
+		fmt.Println("nota:", a)
+	}
 	t, err := trava.Obter(d.Travas(), trava.Destino(p.Perfil.Destino, p.Destino.SystemID), p.Perfil.DestinoBanco)
 	if err != nil {
 		return err

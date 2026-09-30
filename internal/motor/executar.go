@@ -236,6 +236,7 @@ func (r *corrida) copiar(ctx context.Context) error {
 	}
 	r.p = p
 	r.e.Avisos = append([]string(nil), p.Avisos...)
+	r.e.Notas = append([]string(nil), p.Notas...)
 	r.e.BancoNovo = ""
 	pj, _ := json.Marshal(p)
 	r.e.Plano = string(pj)
@@ -243,11 +244,14 @@ func (r *corrida) copiar(ctx context.Context) error {
 	for _, a := range p.Avisos {
 		d.logf("aviso: %s", a)
 	}
+	for _, a := range p.Notas {
+		d.logf("nota: %s", a)
+	}
 
 	// Numa restauração, a origem não é aberta: o dump já está no disco. Num reset, nem ela nem o
 	// Docker: o destino é recriado a partir da base, no próprio servidor.
 	if !restaurar && !resetar {
-		if r.origem, _, err = abrirLado(ctx, d, p.Perfil.Origem); err != nil {
+		if r.origem, _, err = abrirOrigem(ctx, d, p.Perfil.Origem); err != nil {
 			return fmt.Errorf("abrindo a origem: %w", err)
 		}
 		defer func() { r.origem.fechar() }()
@@ -531,7 +535,7 @@ func (r *corrida) dump(ctx context.Context) error {
 		parcial := filepath.Join(r.trabalho, fmt.Sprintf("dump.incompleto-%d", tentativa+1))
 		_ = os.Rename(filepath.Join(r.trabalho, "dump"), parcial)
 		r.d.logf("o dump caiu (%v): nova tentativa em %s (%d de %d); o que ele escreveu ficou em %s", err, esperas[tentativa], tentativa+2, len(esperas)+1, parcial)
-		r.e.Avisos = append(r.e.Avisos, fmt.Sprintf("o dump caiu e recomeçou (tentativa %d): %v", tentativa+2, err))
+		r.e.Notas = append(r.e.Notas, fmt.Sprintf("o dump caiu e recomeçou (tentativa %d): %v", tentativa+2, err))
 		r.gravar()
 		select {
 		case <-ctx.Done():
@@ -582,7 +586,7 @@ func (r *corrida) reabrirOrigem(ctx context.Context) error {
 		r.origem.fechar()
 	}
 	var err error
-	if r.origem, _, err = abrirLado(ctx, r.d, r.p.Perfil.Origem); err != nil {
+	if r.origem, _, err = abrirOrigem(ctx, r.d, r.p.Perfil.Origem); err != nil {
 		return err
 	}
 	if r.origem.c.Info.SystemID != r.p.Origem.SystemID && r.p.Origem.SystemID != "" {

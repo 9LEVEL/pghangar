@@ -24,6 +24,7 @@ escolher o perfil e confirmar.
 |---|---|
 | **Nada é apagado sem pergunta** | Dumps, bancos `__anterior` e bancos parciais ficam até alguém mandar apagar pela TUI. A proteção do servidor é responsabilidade do sysadmin. As únicas exceções são artefatos da própria ferramenta: o `pgpass` temporário e a role temporária |
 | **Um banco `prod` nunca é destino** | A regra fica no motor, não só na tela. Nenhuma opção a desliga |
+| **A origem só é lida** | O motor só lê a origem (catálogo, `pg_dump`, contagens, `COPY … TO`), e toda sessão com ela começa com `default_transaction_read_only`: uma escrita por engano é recusada pelo próprio Postgres. Tudo o que escreve acontece no destino |
 | **Os binários são os oficiais** | O motor orquestra `pg_dump`, `pg_restore` e `vacuumdb`, e não reimplementa nada |
 | **Tudo é checado antes de tocar em algo** | As checagens (§7, etapa 1) rodam inteiras antes do primeiro comando que escreve |
 | **"Sem resposta" não é "fora do ar"** | O diagnóstico diz em que camada parou (§3) |
@@ -365,6 +366,11 @@ que ficou rodando aparece como **órfão** na aba Ambiente.
 - **O `pg_dump` segura um lock leve** (`ACCESS SHARE`) em cada tabela até o fim. Uma migration na
   produção durante o dump fica esperando, e as consultas seguintes fazem fila atrás dela. A
   confirmação lembra isso, e os jobs na origem têm padrão 2.
+- **Toda sessão com a origem começa só de leitura** (`default_transaction_read_only=on`, pelo
+  `options` da conexão): a conexão administrativa, o `pg_dump`, a contagem de linhas e a leitura em
+  blocos. O diagnóstico também, em qualquer conexão. É uma rede contra um bug, e não contra quem
+  mexer no código, porque uma sessão pode desligar o padrão. A garantia do lado do servidor é um
+  usuário sem escrita na origem.
 - **Com uma réplica disponível, puxar dela** tira a carga do primário. Um dump longo numa réplica
   pode ser cancelado por conflito de recuperação. A TUI reconhece esse erro e explica a causa.
 
@@ -395,6 +401,17 @@ andamento.
 | **4 Dumps** | os dumps guardados. `r` restaura de novo, `d` apaga |
 | **5 Anteriores** | os bancos `__anterior`. `u` desfaz, `d` apaga |
 | **6 Ambiente** | o Docker, as imagens (baixar e atualizar) e a chave SSH pública deste servidor |
+
+**O cartão da execução vem em blocos,** do mais importante para o menos:
+1. **o estado**, com uma faixa na cor dele: em andamento (a etapa e a barra), na fila, concluída
+   (o que foi feito, quanto levou, o tamanho do dump, o que aconteceu com o banco que estava lá),
+   esperando a decisão, cancelada ou com erro (a etapa e o motivo);
+2. as etapas e os detalhes (operador, dump, `__novo`, anterior);
+3. **ATENÇÃO:** o que pode dar errado ou mudar o resultado;
+4. **INFORMAÇÕES:** o que vale saber, sem pedir atenção.
+
+A tela do plano separa os mesmos dois níveis antes da confirmação. Quando uma execução termina, o
+rodapé diz como ela terminou ("✔ #3 loja concluída em 3m12s").
 
 ## 15. Estrutura do código
 

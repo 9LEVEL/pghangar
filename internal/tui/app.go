@@ -360,7 +360,7 @@ func (m *Model) tiquetaque() tea.Cmd {
 		m.recarregarExecucoes()
 		for _, e := range m.execucoes {
 			if a, ok := antes[e.ID]; ok && a != e.Estado && e.Terminou() {
-				m.status = fmt.Sprintf("#%d %s: %s", e.ID, e.Perfil, e.Estado)
+				m.status = resumoFim(e)
 			}
 		}
 	}

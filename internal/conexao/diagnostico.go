@@ -99,11 +99,12 @@ func Diagnosticar(ctx context.Context, c cadastro.Conexao, a Ambiente, s Segredo
 			return d.falha("SSH", err)
 		}
 		defer pt.Fechar()
+		pt.SoLeitura = true // o diagnóstico só lê
 		d.ok("SSH", "autenticado como "+c.SSHUsuario)
 		d.ok("Túnel", "até "+c.Endereco())
 		ponte = pt
 	} else {
-		ponte = &Ponte{Host: c.Host, Porta: c.Porta}
+		ponte = &Ponte{Host: c.Host, Porta: c.Porta, SoLeitura: true}
 		if ponte.Socket() {
 			arq := fmt.Sprintf("%s/.s.PGSQL.%d", c.Host, c.Porta)
 			if _, err := os.Stat(arq); err != nil {

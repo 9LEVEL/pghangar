@@ -217,12 +217,12 @@ func TestExecucoes(t *testing.T) {
 	if err != nil || e.Feito != 3 || e.Item != "public.pedidos" || len(e.Apagar) != 1 || e.Terminou() {
 		t.Fatalf("%+v %v", e, err)
 	}
-	e.Estado, e.Fim, e.Avisos = EstadoOK, time.Now(), []string{"x"}
+	e.Estado, e.Fim, e.Avisos, e.Notas = EstadoOK, time.Now(), []string{"x"}, []string{"n1", "n2"}
 	if err := c.GravarExecucao(ctx, e); err != nil {
 		t.Fatal(err)
 	}
 	u, ok, err := c.UltimaDoPerfil(ctx, "p")
-	if err != nil || !ok || u.Estado != EstadoOK || !u.Terminou() || len(u.Avisos) != 1 {
+	if err != nil || !ok || u.Estado != EstadoOK || !u.Terminou() || len(u.Avisos) != 1 || len(u.Notas) != 2 {
 		t.Fatalf("%+v %v %v", u, ok, err)
 	}
 	if _, ok, _ := c.UltimaDoPerfil(ctx, "outro"); ok {

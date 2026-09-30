@@ -158,7 +158,10 @@ func (g *telaGrupo) corpo(w int) string {
 			b.WriteString(quebrar(stPerigoV.Render("   ✖ "), stTexto.Render(x), w) + "\n")
 		}
 		for _, x := range p.Avisos {
-			b.WriteString(quebrar(stAvisoV.Render("   ! "), stDica.Render(x), w) + "\n")
+			b.WriteString(quebrar(stAvisoV.Render("   ! "), stTexto.Render(x), w) + "\n")
+		}
+		for _, x := range p.Notas {
+			b.WriteString(quebrar(stDica.Render("   · "), stDica.Render(x), w) + "\n")
 		}
 		if len(p.Anteriores) > 0 {
 			var t int64

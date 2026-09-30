@@ -113,7 +113,11 @@ type Ponte struct {
 	Host  string
 	Porta int
 	Tunel *tunel.Tunel
-	dir   string // o diretório do socket do túnel, apagado ao fechar
+	// SoLeitura faz toda sessão por esta ponte começar só de leitura
+	// (default_transaction_read_only): é a ponte da origem e a do diagnóstico, que só leem. Uma
+	// escrita por engano é recusada pelo próprio Postgres.
+	SoLeitura bool
+	dir       string // o diretório do socket do túnel, apagado ao fechar
 }
 
 // Fechar fecha o túnel, se houver, e apaga o diretório do socket dele.
@@ -205,6 +209,10 @@ func DSN(c cadastro.Conexao, p *Ponte, banco, aplicacao string) string {
 	}
 	if aplicacao != "" {
 		partes = append(partes, par("application_name", aplicacao))
+	}
+	// O pgx também monta a conexão a partir deste DSN: o options vale para as duas.
+	if p.SoLeitura {
+		partes = append(partes, par("options", "-c default_transaction_read_only=on"))
 	}
 	return strings.Join(partes, " ")
 }

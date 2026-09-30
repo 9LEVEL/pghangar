@@ -259,16 +259,16 @@ func (t *telaPlano) corpo(m *Model) string {
 		}
 	}
 	if len(p.Avisos) > 0 {
-		b.WriteString("\n" + stAvisoV.Render("AVISOS") + "\n")
+		b.WriteString("\n" + stAvisoV.Render(fmt.Sprintf("ATENÇÃO (%d)", len(p.Avisos))) + "\n")
 		for _, x := range p.Avisos {
 			b.WriteString(quebrar(stAvisoV.Render("  ! "), stTexto.Render(x), w) + "\n")
 		}
 	}
-	for _, x := range p.Notas {
-		b.WriteString("\n" + quebrar(stDica.Render("  · "), stDica.Render(x), w))
-	}
 	if len(p.Notas) > 0 {
-		b.WriteString("\n")
+		b.WriteString("\n" + stCabecalho.Render(fmt.Sprintf("INFORMAÇÕES (%d)", len(p.Notas))) + "\n")
+		for _, x := range p.Notas {
+			b.WriteString(quebrar(stDica.Render("  · "), stDica.Render(x), w) + "\n")
+		}
 	}
 
 	return strings.TrimRight(b.String(), "\n")

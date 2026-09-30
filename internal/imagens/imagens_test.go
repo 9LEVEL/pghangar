@@ -2,6 +2,7 @@ package imagens
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"strings"
 	"testing"
@@ -98,5 +99,13 @@ func TestRodarCanceladoParaOContainer(t *testing.T) {
 	out, _ := exec.Command("docker", "ps", "-a", "--filter", "name="+nome, "--format", "{{.Names}}").Output()
 	if strings.TrimSpace(string(out)) != "" {
 		t.Fatalf("o container ficou para trás: %s", out)
+	}
+}
+
+// Um container que terminou sozinho entre a listagem e o stop (o --rm já o levou) conta como parado.
+func TestPararContainerQueJaSaiu(t *testing.T) {
+	d := docker(t)
+	if err := d.Parar(context.Background(), fmt.Sprintf("pghangar-teste-inexistente-%d", time.Now().UnixNano())); err != nil {
+		t.Fatal(err)
 	}
 }

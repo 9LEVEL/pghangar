@@ -323,8 +323,8 @@ func TestPontaAPontaComOBinario(t *testing.T) {
 		t.Fatalf("a role temporária deveria ter sobrado depois do kill -9 (é o caso que a limpeza cobre): %d", n)
 	}
 	p = planejar()
-	if !p.NovoExiste || !p.Bloqueado() || !strings.Contains(strings.Join(p.Avisos, " "), role) {
-		t.Fatalf("o plano deveria bloquear pelo __novo e avisar da role: %v %v", p.Bloqueios, p.Avisos)
+	if !p.NovoExiste || !p.Bloqueado() || !strings.Contains(strings.Join(p.Notas, " "), role) {
+		t.Fatalf("o plano deveria bloquear pelo __novo e informar da role: %v %v", p.Bloqueios, p.Notas)
 	}
 	// O container órfão do restore: a aba Ambiente mostra; aqui, paramos como ela faria.
 	out, _ := exec.Command("docker", "ps", "--format", "{{.Names}}", "--filter", "label="+imagens.Rotulo+"="+strconv.FormatInt(id3, 10), "--filter", "label="+imagens.RotuloInstancia+"="+instancia(t, cad)).Output()

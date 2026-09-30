@@ -471,3 +471,46 @@ trecho do cliente até ele é o socket só do root.
   tem o seu dump, o seu anterior e o seu desfazer.
 - **Por que sem mouse.** Capturar o mouse tira do terminal a seleção de texto, que a tela usa para
   copiar, por exemplo, a linha do `authorized_keys`.
+
+## 2026-09-30: Toda sessão com a origem começa só de leitura
+
+**Recomendação aceita pelo usuário,** que perguntou se a origem nunca é afetada.
+
+**Decidido:**
+- o motor abre a origem por `abrirOrigem`, e a ponte dela leva `default_transaction_read_only=on`
+  no `options` da conexão. Isso vale para a conexão administrativa, o `pg_dump`, a contagem de
+  linhas e a leitura em blocos do link instável;
+- o diagnóstico abre qualquer conexão do mesmo jeito, porque ele só lê;
+- o destino continua escrevendo normalmente.
+
+**Por quê:** o motor já só lia a origem, mas essa garantia vinha só do código. Com um usuário
+superusuário na origem, um bug poderia escrever lá. Agora o próprio Postgres recusa a escrita
+(`25006`, "cannot execute … in a read-only transaction"). Nada deixou de funcionar, porque tudo o
+que o motor faz na origem é leitura, a mesma que ele faz numa réplica. A suíte de integração inteira
+roda com a origem só de leitura.
+
+**O limite:** é uma rede contra um bug, e não contra quem mexer no código, porque uma sessão pode
+desligar o padrão com `SET` ou `BEGIN READ WRITE`. A garantia do lado do servidor é um usuário sem
+escrita na origem, por exemplo com `pg_read_all_data` (PG 14+) e `BYPASSRLS`, se houver RLS.
+
+## 2026-09-30: Atenção separada de informação, e o estado primeiro
+
+**Recomendação aceita pelo usuário,** depois da primeira cópia real. Os avisos do plano apareciam
+todos iguais, em amarelo com "!", e uma cópia concluída parecia ter dado erro.
+
+**Decidido:**
+- **dois níveis de mensagem:** os avisos (atenção: o que pode dar errado ou mudar o resultado) e
+  as notas (informação). Viram nota o banco criado no destino, a extensão mais nova no destino, a
+  versão do servidor atualizada no cadastro, a role temporária que sobrou e é removida, e o dump
+  que caiu e recomeçou sozinho;
+- **a extensão em versões diferentes depende do lado:** mais antiga no destino pede atenção,
+  porque o restore a cria na versão do destino. Mais nova é só uma nota. Versões que não dá para
+  comparar pedem atenção;
+- a execução grava as notas numa coluna própria (`notas`). As execuções antigas mostram tudo em
+  atenção, como antes;
+- o cartão da execução vem em blocos (docs/ESTRATEGIA.md §14): o estado com uma faixa colorida,
+  as etapas e os detalhes, ATENÇÃO e INFORMAÇÕES. Uma cópia concluída diz isso com destaque, e o
+  rodapé avisa quando uma execução termina.
+
+**Por quê:** o que a pessoa precisa saber primeiro é se deu certo. Misturar "o banco vai ser
+criado" com "a extensão é mais antiga no destino" esconde o que pede ação.

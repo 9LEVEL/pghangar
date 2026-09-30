@@ -144,6 +144,9 @@ func TestCopiaPeloTunelComTLS(t *testing.T) {
 	if strings.Contains(a.log.String(), senhaTeste) {
 		t.Fatal("a senha apareceu no log")
 	}
+	if !strings.Contains(a.log.String(), "options='-c default_transaction_read_only=on'") {
+		t.Fatal("o pg_dump deveria abrir a origem só de leitura")
+	}
 
 	// 3. Sem TLS, o erro do caso real.
 	if dg := diag(func(c *cadastro.Conexao) { c.SSLMode = "disable" }); dg.Parou() != "Autenticação" || !strings.Contains(dg.Info.Erro, "no encryption") {

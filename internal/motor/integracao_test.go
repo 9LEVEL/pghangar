@@ -896,8 +896,8 @@ func TestCopiaPeloTunelSSH(t *testing.T) {
 		}()
 		_ = Executar(ctx, a.d, id0)
 		e, _ := a.cad.Execucao(ctx, id0)
-		if e.Estado != cadastro.EstadoOK || !strings.Contains(strings.Join(e.Avisos, " "), "recomeçou") {
-			t.Fatalf("o dump deveria ter recomeçado sozinho: %s %s %v\n%s", e.Estado, e.Mensagem, e.Avisos, a.log.String())
+		if e.Estado != cadastro.EstadoOK || !strings.Contains(strings.Join(e.Notas, " "), "recomeçou") {
+			t.Fatalf("o dump deveria ter recomeçado sozinho: %s %s %v\n%s", e.Estado, e.Mensagem, e.Notas, a.log.String())
 		}
 		if _, err := os.Stat(filepath.Join(e.DumpDir, "dump.incompleto-1")); err != nil {
 			t.Fatal("a tentativa que caiu deveria ficar no disco")
@@ -1293,8 +1293,8 @@ func TestLinkInstavel(t *testing.T) {
 	if !strings.Contains(a.log.String(), "retomando o dump incompleto") {
 		t.Fatal("deveria ter retomado o dump da cópia cancelada")
 	}
-	if !strings.Contains(strings.Join(e2.Avisos, " "), "retomou de onde parou") {
-		t.Fatalf("a queda do túnel deveria ter sido retomada: %v", e2.Avisos)
+	if !strings.Contains(strings.Join(e2.Notas, " "), "retomou de onde parou") {
+		t.Fatalf("a queda do túnel deveria ter sido retomada: %v", e2.Notas)
 	}
 	if e2.DumpDir != e1.DumpDir {
 		t.Fatal("o dump retomado é o mesmo diretório")

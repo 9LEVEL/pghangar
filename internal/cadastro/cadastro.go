@@ -248,7 +248,8 @@ type Execucao struct {
 	ErrosRestore  int
 	TamanhoDump   int64
 	Mensagem      string
-	Avisos        []string
+	Avisos        []string // o que pede atenção
+	Notas         []string // o que vale saber, sem pedir atenção
 	Apagar        []string // anteriores que o sysadmin marcou para apagar antes de começar
 	Plano         string   // o plano confirmado, em JSON
 	Operador      string   // quem confirmou: o usuário por trás do sudo, e de onde veio o SSH
@@ -383,6 +384,7 @@ func (c *Cadastro) criar(ctx context.Context) error {
 		{"execucoes", "novo_oid", "INTEGER NOT NULL DEFAULT 0"},
 		{"execucoes", "operador", "TEXT NOT NULL DEFAULT ''"},
 		{"execucoes", "grupo", "TEXT NOT NULL DEFAULT ''"},
+		{"execucoes", "notas", "TEXT NOT NULL DEFAULT '[]'"},
 		{"perfis", "compressao", "TEXT NOT NULL DEFAULT 'zstd'"},
 		{"perfis", "schemas", "TEXT NOT NULL DEFAULT '[]'"},
 		{"perfis", "schemas_fora", "TEXT NOT NULL DEFAULT '[]'"},
@@ -896,20 +898,21 @@ func ValidarRepositorio(r string) error {
 
 const colunasExecucao = `id, perfil, tipo, estado, etapa, etapa_num, etapas_total, feito, total, item, inicio, fim,
 	atualizada_em, pid, destino, banco, dump_dir, banco_novo, banco_anterior, erros_restore, tamanho_dump, mensagem,
-	avisos, apagar, plano, novo_oid, operador, grupo`
+	avisos, apagar, plano, novo_oid, operador, grupo, notas`
 
 func lerExecucao(l linha) (Execucao, error) {
 	var e Execucao
-	var ini, fim, atu, av, ap string
+	var ini, fim, atu, av, ap, nt string
 	err := l.Scan(&e.ID, &e.Perfil, &e.Tipo, &e.Estado, &e.Etapa, &e.EtapaNum, &e.EtapasTotal, &e.Feito, &e.Total, &e.Item,
 		&ini, &fim, &atu, &e.PID, &e.Destino, &e.Banco, &e.DumpDir, &e.BancoNovo, &e.BancoAnterior, &e.ErrosRestore,
-		&e.TamanhoDump, &e.Mensagem, &av, &ap, &e.Plano, &e.NovoOID, &e.Operador, &e.Grupo)
+		&e.TamanhoDump, &e.Mensagem, &av, &ap, &e.Plano, &e.NovoOID, &e.Operador, &e.Grupo, &nt)
 	if err != nil {
 		return e, err
 	}
 	e.Inicio, e.Fim, e.AtualizadaEm = hora(ini), hora(fim), hora(atu)
 	_ = json.Unmarshal([]byte(av), &e.Avisos)
 	_ = json.Unmarshal([]byte(ap), &e.Apagar)
+	_ = json.Unmarshal([]byte(nt), &e.Notas)
 	return e, nil
 }
 
@@ -921,12 +924,13 @@ func (c *Cadastro) NovaExecucao(ctx context.Context, e Execucao) (int64, error) 
 	}
 	av, _ := json.Marshal(nulo(e.Avisos))
 	ap, _ := json.Marshal(nulo(e.Apagar))
+	nt, _ := json.Marshal(nulo(e.Notas))
 	r, err := c.db.ExecContext(ctx, `
 		INSERT INTO execucoes (perfil, tipo, estado, inicio, atualizada_em, destino, banco, dump_dir, banco_novo,
-			banco_anterior, mensagem, avisos, apagar, plano, operador, grupo)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			banco_anterior, mensagem, avisos, apagar, plano, operador, grupo, notas)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.Perfil, e.Tipo, e.Estado, texto(e.Inicio), texto(agora), e.Destino, e.Banco, e.DumpDir, e.BancoNovo,
-		e.BancoAnterior, e.Mensagem, string(av), string(ap), e.Plano, e.Operador, e.Grupo)
+		e.BancoAnterior, e.Mensagem, string(av), string(ap), e.Plano, e.Operador, e.Grupo, string(nt))
 	if err != nil {
 		return 0, err
 	}
@@ -937,13 +941,15 @@ func (c *Cadastro) NovaExecucao(ctx context.Context, e Execucao) (int64, error) 
 func (c *Cadastro) GravarExecucao(ctx context.Context, e Execucao) error {
 	av, _ := json.Marshal(nulo(e.Avisos))
 	ap, _ := json.Marshal(nulo(e.Apagar))
+	nt, _ := json.Marshal(nulo(e.Notas))
 	_, err := c.db.ExecContext(ctx, `
 		UPDATE execucoes SET estado = ?, etapa = ?, etapa_num = ?, etapas_total = ?, feito = ?, total = ?, item = ?,
 			inicio = ?, fim = ?, atualizada_em = ?, pid = ?, dump_dir = ?, banco_novo = ?, banco_anterior = ?, erros_restore = ?,
-			tamanho_dump = ?, mensagem = ?, avisos = ?, apagar = ?, plano = ?, novo_oid = ?
+			tamanho_dump = ?, mensagem = ?, avisos = ?, apagar = ?, plano = ?, novo_oid = ?, notas = ?
 		WHERE id = ?`,
 		e.Estado, e.Etapa, e.EtapaNum, e.EtapasTotal, e.Feito, e.Total, e.Item, texto(e.Inicio), texto(e.Fim), texto(time.Now()), e.PID,
-		e.DumpDir, e.BancoNovo, e.BancoAnterior, e.ErrosRestore, e.TamanhoDump, e.Mensagem, string(av), string(ap), e.Plano, e.NovoOID, e.ID)
+		e.DumpDir, e.BancoNovo, e.BancoAnterior, e.ErrosRestore, e.TamanhoDump, e.Mensagem, string(av), string(ap), e.Plano, e.NovoOID,
+		string(nt), e.ID)
 	return err
 }
 

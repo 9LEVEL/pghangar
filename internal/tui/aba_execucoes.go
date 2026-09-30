@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/9LEVEL/pghangar/internal/cadastro"
 	"github.com/9LEVEL/pghangar/internal/conexao"
@@ -213,6 +214,8 @@ func (a *abaExecucoes) view(m *Model) string {
 	return b.String()
 }
 
+// cartao é a execução escolhida, em blocos: o estado (o que está acontecendo, ou como terminou), as
+// etapas, os detalhes, o que pede atenção e o que é só informação.
 func (a *abaExecucoes) cartao(m *Model, e cadastro.Execucao, w int) string {
 	larg := limitar(w-4, 40, 140)
 	var b strings.Builder
@@ -224,7 +227,8 @@ func (a *abaExecucoes) cartao(m *Model, e cadastro.Execucao, w int) string {
 		}
 		cab += stDica.Render(fmt.Sprintf("  · começou %s · %s", idade(e.Inicio), duracao(fim.Sub(e.Inicio))))
 	}
-	b.WriteString(cab + "\n")
+	b.WriteString(cab + "\n\n")
+	b.WriteString(faixaEstado(e, larg-2) + "\n\n")
 
 	// As etapas, com a atual em destaque; as que não se aplicam a esta cópia aparecem puladas.
 	pula := puladas(e)
@@ -252,15 +256,11 @@ func (a *abaExecucoes) cartao(m *Model, e cadastro.Execucao, w int) string {
 			et = append(et, stDica.Render("· "+nome))
 		}
 	}
-	b.WriteString(quebrar("", strings.Join(et, "  "), larg-2) + "\n")
+	b.WriteString(quebrar(stCabecalho.Render(preencher("ETAPAS", 10)), strings.Join(et, "  "), larg-2) + "\n")
 
-	if !e.Terminou() && e.Total > 0 {
-		pct := e.Feito * 100 / max(e.Total, 1)
-		b.WriteString(fmt.Sprintf("%s %s %s\n", barra(e.Feito, e.Total, limitar(larg-40, 10, 60)), stValor.Render(fmt.Sprintf("%3d%%", pct)),
-			stDica.Render(fmt.Sprintf("%d/%d  %s", e.Feito, e.Total, truncar(e.Item, 50)))))
-	}
+	detalhe := func(rot, val string) { b.WriteString(quebrar(stRotulo.Render(preencher(rot, 10)), val, larg-2) + "\n") }
 	if e.Operador != "" {
-		b.WriteString(stRotulo.Render("operador ") + stTexto.Render(e.Operador) + "\n")
+		detalhe("operador", stTexto.Render(e.Operador))
 	}
 	if e.DumpDir != "" {
 		s := e.DumpDir
@@ -270,32 +270,138 @@ func (a *abaExecucoes) cartao(m *Model, e cadastro.Execucao, w int) string {
 				s += " escritos até agora"
 			}
 		}
-		b.WriteString(stRotulo.Render("dump     ") + stTexto.Render(s) + "\n")
+		detalhe("dump", stTexto.Render(s))
 	}
 	if e.BancoNovo != "" && e.BancoAnterior == "" && e.Estado != cadastro.EstadoOK {
-		b.WriteString(stRotulo.Render("__novo   ") + stTexto.Render(e.BancoNovo) + "\n")
+		detalhe("__novo", stTexto.Render(e.BancoNovo))
 	}
 	if e.BancoAnterior != "" {
-		b.WriteString(stRotulo.Render("anterior ") + stTexto.Render(e.BancoAnterior) + stDica.Render(" (aba 5 para desfazer ou apagar)") + "\n")
+		detalhe("anterior", stTexto.Render(e.BancoAnterior)+stDica.Render(" (aba 5 para desfazer ou apagar)"))
 	}
 	if len(e.Apagar) > 0 {
-		b.WriteString(stRotulo.Render("apagados ") + stTexto.Render(strings.Join(e.Apagar, ", ")) + "\n")
+		detalhe("apagados", stTexto.Render(strings.Join(e.Apagar, ", ")))
 	}
-	if e.Mensagem != "" {
-		st := stTexto
-		switch e.Estado {
-		case cadastro.EstadoErro, cadastro.EstadoInterrompida:
-			st = stPerigoV
-		case cadastro.EstadoAguardando, cadastro.EstadoCancelada:
-			st = stAvisoV
+
+	// Primeiro o que pede atenção, depois o que é só informação: a execução antiga, que não
+	// separava, tem tudo em atenção.
+	if len(e.Avisos) > 0 {
+		b.WriteString("\n" + stAvisoV.Render(fmt.Sprintf("ATENÇÃO (%d)", len(e.Avisos))) + "\n")
+		for _, av := range e.Avisos {
+			b.WriteString(quebrar(stAvisoV.Render(" ! "), stTexto.Render(av), larg-2) + "\n")
 		}
-		b.WriteString(quebrar("", st.Render(e.Mensagem), larg-2) + "\n")
 	}
-	for _, av := range e.Avisos {
-		b.WriteString(quebrar(stAvisoV.Render("! "), stDica.Render(av), larg-2) + "\n")
-	}
-	if e.Estado == cadastro.EstadoAguardando {
-		b.WriteString("\n" + stAvisoV.Render("A troca espera a sua decisão: ") + dica("enter", "ver o log") + "   " + dica("t", "trocar mesmo assim") + "   " + dica("x", "não trocar"))
+	if len(e.Notas) > 0 {
+		b.WriteString("\n" + stCabecalho.Render(fmt.Sprintf("INFORMAÇÕES (%d)", len(e.Notas))) + "\n")
+		for _, n := range e.Notas {
+			b.WriteString(quebrar(stDica.Render(" · "), stDica.Render(n), larg-2) + "\n")
+		}
 	}
 	return stCartao.Width(larg).Render(strings.TrimRight(b.String(), "\n"))
+}
+
+// oQueE é o nome do trabalho da execução e a terminação dele ("a" ou "o"): cópia concluída, reset
+// concluído.
+func oQueE(e cadastro.Execucao) (nome, g string) {
+	switch e.Tipo {
+	case cadastro.TipoRestauracao:
+		return "restauração", "a"
+	case cadastro.TipoReset:
+		return "reset", "o"
+	case cadastro.TipoTroca:
+		return "troca", "a"
+	}
+	return "cópia", "a"
+}
+
+// faixaEstado é o bloco do estado, com uma faixa na cor dele: em andamento, na fila, concluída,
+// esperando a decisão, cancelada ou com erro. É o que a pessoa lê primeiro.
+func faixaEstado(e cadastro.Execucao, larg int) string {
+	nome, g := oQueE(e)
+	var p motor.Plano
+	_ = json.Unmarshal([]byte(e.Plano), &p)
+	cor := corDestaque
+	var titulo string
+	var linhas []string
+	switch e.Estado {
+	case cadastro.EstadoFila:
+		cor, titulo = corApagada, "⏳ NA FILA DO GRUPO"
+		linhas = append(linhas, stDica.Render("começa quando a anterior do grupo terminar"))
+	case cadastro.EstadoIniciando, cadastro.EstadoRodando:
+		titulo = "▶ EM ANDAMENTO"
+		if e.EtapaNum > 0 {
+			titulo += fmt.Sprintf(" · etapa %d de %d: %s", e.EtapaNum, len(motor.Etapas), e.Etapa)
+		}
+		if e.Total > 0 {
+			pct := e.Feito * 100 / max(e.Total, 1)
+			linhas = append(linhas, fmt.Sprintf("%s %s %s", barra(e.Feito, e.Total, limitar(larg-40, 10, 60)), stValor.Render(fmt.Sprintf("%3d%%", pct)),
+				stDica.Render(fmt.Sprintf("%d/%d  %s", e.Feito, e.Total, truncar(e.Item, 50)))))
+		}
+	case cadastro.EstadoOK:
+		cor, titulo = corOk, strings.ToUpper("✔ "+nome+" concluíd"+g)
+		if e.Mensagem != "" {
+			linhas = append(linhas, stTexto.Render(e.Mensagem))
+		}
+		var fatos []string
+		if !e.Fim.IsZero() && !e.Inicio.IsZero() {
+			fatos = append(fatos, "em "+duracao(e.Fim.Sub(e.Inicio)))
+		}
+		if e.TamanhoDump > 0 && e.Tipo == cadastro.TipoCopia {
+			fatos = append(fatos, "dump de "+motor.Tamanho(e.TamanhoDump))
+		}
+		switch {
+		case e.BancoAnterior != "":
+			fatos = append(fatos, "o banco que estava lá virou "+e.BancoAnterior+" (a aba 5 desfaz ou apaga)")
+		case e.Tipo == cadastro.TipoCopia && p.Perfil.Nome != "" && !p.Destino.Existe:
+			fatos = append(fatos, "o banco não existia no destino e foi criado")
+		}
+		if len(fatos) > 0 {
+			linhas = append(linhas, stDica.Render(strings.Join(fatos, " · ")))
+		}
+		if n := len(e.Avisos); n > 0 {
+			linhas = append(linhas, stAvisoV.Render(fmt.Sprintf("%d ponto(s) de atenção abaixo", n)))
+		}
+	case cadastro.EstadoAguardando:
+		cor, titulo = corAviso, "⚠ A TROCA ESPERA A SUA DECISÃO"
+		linhas = append(linhas, stTexto.Render(e.Mensagem),
+			dica("enter", "ver o log")+"   "+dica("t", "trocar mesmo assim")+"   "+dica("x", "não trocar"))
+	case cadastro.EstadoCancelada:
+		cor, titulo = corAviso, strings.ToUpper("■ "+nome+" cancelad"+g+" na etapa ")+e.Etapa
+		linhas = append(linhas, stTexto.Render(e.Mensagem))
+	default:
+		cor, titulo = corPerigo, "✖ FALHOU NA ETAPA "+e.Etapa
+		if e.Estado == cadastro.EstadoInterrompida {
+			titulo = "✖ INTERROMPIDA NA ETAPA " + e.Etapa
+		}
+		linhas = append(linhas, stTexto.Render(e.Mensagem), dica("enter", "ver o log"))
+	}
+	corpo := lipgloss.NewStyle().Foreground(cor).Bold(true).Render(titulo)
+	for _, l := range linhas {
+		if l != "" {
+			corpo += "\n" + l
+		}
+	}
+	return lipgloss.NewStyle().Border(lipgloss.ThickBorder(), false, false, false, true).BorderForeground(cor).
+		PaddingLeft(1).Width(larg).Render(corpo)
+}
+
+// resumoFim é o aviso do rodapé quando uma execução termina.
+func resumoFim(e cadastro.Execucao) string {
+	nome, g := oQueE(e)
+	id := fmt.Sprintf("#%d %s", e.ID, e.Perfil)
+	switch e.Estado {
+	case cadastro.EstadoOK:
+		s := fmt.Sprintf("✔ %s concluíd%s", id, g)
+		if !e.Fim.IsZero() && !e.Inicio.IsZero() {
+			s += " em " + duracao(e.Fim.Sub(e.Inicio))
+		}
+		if n := len(e.Avisos); n > 0 {
+			s += fmt.Sprintf(", com %d ponto(s) de atenção (aba 2)", n)
+		}
+		return s
+	case cadastro.EstadoAguardando:
+		return fmt.Sprintf("⚠ %s: a troca espera a sua decisão (aba 2)", id)
+	case cadastro.EstadoCancelada:
+		return fmt.Sprintf("■ %s: %s cancelad%s", id, nome, g)
+	}
+	return fmt.Sprintf("✖ %s: falhou na etapa %s (aba 2)", id, e.Etapa)
 }

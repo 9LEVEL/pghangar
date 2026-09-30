@@ -50,6 +50,17 @@ func TestDSNPeloTunelSemTLSNoCliente(t *testing.T) {
 	}
 }
 
+// A ponte da origem leva a sessão só de leitura no DSN, que serve ao pg_dump e ao pgx.
+func TestDSNSoLeitura(t *testing.T) {
+	c := conexaoTeste()
+	if d := DSN(c, &Ponte{Host: "db", Porta: 5432, SoLeitura: true}, "loja", ""); !strings.Contains(d, `options='-c default_transaction_read_only=on'`) {
+		t.Fatalf("a origem começa só de leitura: %s", d)
+	}
+	if d := DSN(c, &Ponte{Host: "db", Porta: 5432}, "loja", ""); strings.Contains(d, "options") {
+		t.Fatalf("o destino escreve: %s", d)
+	}
+}
+
 func TestLinhaPgpassEscapa(t *testing.T) {
 	c := conexaoTeste()
 	c.Usuario = "u:1"

@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -151,6 +152,53 @@ func (p Plano) Confirmacao() string {
 func (p *Plano) bloquear(f string, a ...any) { p.Bloqueios = append(p.Bloqueios, fmt.Sprintf(f, a...)) }
 func (p *Plano) avisar(f string, a ...any)   { p.Avisos = append(p.Avisos, fmt.Sprintf(f, a...)) }
 
+// notar registra uma informação: algo que a cópia faz e que vale saber, sem pedir atenção. Os
+// avisos são o que pode dar errado ou mudar o resultado.
+func (p *Plano) notar(f string, a ...any) { p.Notas = append(p.Notas, fmt.Sprintf(f, a...)) }
+
+// avisoExtensao diz como tratar uma extensão em versões diferentes na origem e no destino. Mais
+// antiga no destino pede atenção: o que dependa da versão nova pode falhar ou mudar. Mais nova é
+// só uma informação.
+func avisoExtensao(nome, origem, destino string) (texto string, atencao bool) {
+	base := fmt.Sprintf("a extensão %s está na versão %s na origem e na %s no destino", nome, origem, destino)
+	switch c, ok := compararVersoes(destino, origem); {
+	case ok && c > 0:
+		return base + " (mais nova): o restore a cria na versão do destino", false
+	case ok && c < 0:
+		return base + ", mais antiga: o que dependa da versão nova pode falhar no restore ou mudar de comportamento. Atualize a extensão no servidor de destino", true
+	}
+	return base, true
+}
+
+// compararVersoes compara versões como 0.8.6 e 1.12, parte a parte. ok é falso se alguma parte não
+// for número.
+func compararVersoes(a, b string) (int, bool) {
+	pa, pb := strings.FieldsFunc(a, separaVersao), strings.FieldsFunc(b, separaVersao)
+	for i := 0; i < max(len(pa), len(pb)); i++ {
+		x, y := 0, 0
+		var err error
+		if i < len(pa) {
+			if x, err = strconv.Atoi(pa[i]); err != nil {
+				return 0, false
+			}
+		}
+		if i < len(pb) {
+			if y, err = strconv.Atoi(pb[i]); err != nil {
+				return 0, false
+			}
+		}
+		if x != y {
+			if x < y {
+				return -1, true
+			}
+			return 1, true
+		}
+	}
+	return 0, true
+}
+
+func separaVersao(r rune) bool { return r == '.' || r == '-' }
+
 // Pergunta é o que a tela precisa perguntar antes de o plano seguir: uma senha, uma passphrase ou
 // a chave de um servidor SSH desconhecido.
 type Pergunta struct {
@@ -236,7 +284,18 @@ func (l *lado) adminVivo(ctx context.Context, d Deps) (*pgx.Conn, error) {
 
 // abrirLado abre a ponte e a conexão administrativa, e relê o servidor (a versão gravada no
 // cadastro é atualizada aqui: a que decide é a de agora).
+// abrirOrigem abre a origem só de leitura: toda sessão por ela, as do pgx e a do pg_dump, começa
+// com default_transaction_read_only. O motor só lê a origem, e uma escrita por engano é recusada
+// pelo próprio Postgres.
+func abrirOrigem(ctx context.Context, d Deps, nome string) (*lado, cadastro.Info, error) {
+	return abrirLadoCom(ctx, d, nome, true)
+}
+
 func abrirLado(ctx context.Context, d Deps, nome string) (*lado, cadastro.Info, error) {
+	return abrirLadoCom(ctx, d, nome, false)
+}
+
+func abrirLadoCom(ctx context.Context, d Deps, nome string, soLeitura bool) (*lado, cadastro.Info, error) {
 	c, err := d.Cadastro.Conexao(ctx, nome)
 	if err != nil {
 		return nil, cadastro.Info{}, err
@@ -262,6 +321,7 @@ func abrirLado(ctx context.Context, d Deps, nome string) (*lado, cadastro.Info, 
 		}
 		return nil, c.Info, fmt.Errorf("%s: %w", nome, err)
 	}
+	ponte.SoLeitura = soLeitura
 	l := &lado{c: c, ponte: ponte, senha: senha}
 	l.admin, err = l.conectar(ctx, d, c.BancoAdmin)
 	if err != nil {
@@ -359,7 +419,7 @@ func planejar(ctx context.Context, d Deps, nomePerfil string, guardado *Manifest
 	var origem *lado
 	var infoO, antesOrigem cadastro.Info
 	if guardado == nil {
-		origem, antesOrigem, err = abrirLado(ctx, d, perfil.Origem)
+		origem, antesOrigem, err = abrirOrigem(ctx, d, perfil.Origem)
 		if err != nil {
 			var pg *Pergunta
 			if errors.As(err, &pg) {
@@ -396,7 +456,7 @@ func planejar(ctx context.Context, d Deps, nomePerfil string, guardado *Manifest
 		agora cadastro.Info
 	}{{perfil.Origem, antesOrigem, infoO}, {destino.c.Nome, antesDestino, infoD}} {
 		if x.antes.VersaoNum != 0 && versoes.Major(x.antes.VersaoNum) != versoes.Major(x.agora.VersaoNum) {
-			p.avisar("a versão de %s mudou de %s para %s desde a última verificação: o cadastro foi atualizado", x.nome,
+			p.notar("a versão de %s mudou de %s para %s desde a última verificação: o cadastro foi atualizado", x.nome,
 				versoes.Texto(x.antes.VersaoNum), versoes.Texto(x.agora.VersaoNum))
 		}
 	}
@@ -497,7 +557,7 @@ func planejar(ctx context.Context, d Deps, nomePerfil string, guardado *Manifest
 	} else {
 		p.Destino.Info = bo
 		p.Destino.Info.Dono = destino.c.Usuario
-		p.avisar("o banco %s não existe no destino: vai ser criado, com o locale da origem e o dono %s", perfil.DestinoBanco, destino.c.Usuario)
+		p.notar("o banco %s não existe no destino: vai ser criado, com o locale da origem e o dono %s", perfil.DestinoBanco, destino.c.Usuario)
 	}
 	if _, ok := banco(infoD, p.Novo); ok {
 		p.NovoExiste = true
@@ -542,7 +602,11 @@ func planejar(ctx context.Context, d Deps, nomePerfil string, guardado *Manifest
 		case err != nil:
 			return p, err
 		case padrao != nil && *padrao != e.Versao:
-			p.avisar("a extensão %s está na versão %s na origem e na %s no destino", e.Nome, e.Versao, *padrao)
+			if texto, atencao := avisoExtensao(e.Nome, e.Versao, *padrao); atencao {
+				p.avisar("%s", texto)
+			} else {
+				p.notar("%s", texto)
+			}
 		}
 	}
 	usados, err := bancosDePerfis(ctx, d, perfil.Destino)
@@ -571,7 +635,7 @@ func planejar(ctx context.Context, d Deps, nomePerfil string, guardado *Manifest
 		}
 	}
 	if orfas, err := rolesOrfas(ctx, d, destino.admin); err == nil && len(orfas) > 0 {
-		p.avisar("sobrou no destino a role temporária %s, de uma execução que não terminou: esta cópia a neutraliza e remove", strings.Join(orfas, ", "))
+		p.notar("sobrou no destino a role temporária %s, de uma execução que não terminou: esta cópia a neutraliza e remove", strings.Join(orfas, ", "))
 	}
 
 	// O disco do destino, quando ele está neste servidor: o __novo ocupa perto do banco de origem.

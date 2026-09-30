@@ -16,6 +16,7 @@ ao usuário.
 | **Só se altera este diretório** | `/docker/copy-db-prod`, `/docker/pgtui` e os demais servem só de referência. Pode ler e copiar ideias; nunca editar, formatar ou gerar arquivos lá |
 | **Nada é apagado sem pergunta** | Nenhum dump, banco `__anterior` ou `__novo` sai sem o sysadmin mandar. A exceção é o `pgpass` temporário de cada execução |
 | **Um banco `prod` nunca é destino** | A regra fica no motor, com teste, e nenhuma opção a desliga |
+| **A origem só é lida** | Nada escreve na origem. Toda sessão com ela passa por `abrirOrigem` (`internal/motor`) e começa com `default_transaction_read_only` |
 | **Descer de versão é bloqueado** | Uma imagem só, a da maior versão entre a origem e o destino, faz o dump e o restore |
 | **Senha nunca na linha de comando** | Nem em argumento, nem em `docker run -e`. Ela entra por um `pgpass` temporário montado |
 | **Uma decisão nova vai para `docs/DECISOES.md`** | Com data, o que foi decidido e por quê. Uma decisão substituída continua lá, marcada |

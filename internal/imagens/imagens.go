@@ -276,5 +276,10 @@ func (d Docker) Rodando(ctx context.Context, instancia string) ([]Container, err
 // Parar para um container da ferramenta pelo nome.
 func (d Docker) Parar(ctx context.Context, nome string) error {
 	_, err := d.saida(ctx, "stop", "--time", "5", nome)
+	// Um container que já não existe terminou sozinho, e o --rm o levou: está parado, que é o que
+	// se queria.
+	if err != nil && strings.Contains(err.Error(), "No such container") {
+		return nil
+	}
 	return err
 }
