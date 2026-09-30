@@ -39,6 +39,10 @@ alguém mandar apagar pela TUI.
 **A única exceção** é o `pgpass` temporário de cada execução. Ele é um segredo da própria
 ferramenta, e não dado.
 
+**Atualizada em 2026-09-30:** a role temporária também sai sozinha (a entrada "Processo morto",
+abaixo), e o `__novo` que sobrou pode ser apagado pela correção da cópia, sempre com o SIM do
+sysadmin (a entrada "A cópia corrige sozinha o que é seguro").
+
 ## 2026-09-29: Bancos `__anterior`: sempre perguntar
 
 **Decisão do usuário.**
@@ -168,7 +172,7 @@ servidores de dev) apontando para o mesmo servidor de destino nunca mexem na rol
 - a role temporária que sobrou é **neutralizada** (`NOSUPERUSER NOLOGIN`) **e removida** pela próxima
   cópia daquela instalação para aquele servidor, ou quando o `__novo` que ela possui é apagado. As
   roles de execuções ainda em andamento (cópias para outros bancos do mesmo servidor) ficam de fora;
-- o plano avisa quando há uma role assim.
+- o plano avisa quando há uma role assim (desde 2026-09-30, como informação, e não como aviso).
 
 **Por quê:** a exceção ao "nada é apagado sem pergunta" vale para os artefatos da própria
 ferramenta, e um segredo ou uma role de superusuário esquecidos são o pior que pode sobrar.
@@ -342,7 +346,8 @@ cadastro.
 **Recomendação aceita pelo usuário.**
 
 **Decidido:**
-- um destino `dev` se confirma com Enter e `y`;
+- ~~um destino `dev` se confirma com Enter e `y`~~ **(substituído:** só o `y` confirma, pela
+  entrada "Num destino dev, só o `y` confirma"**)**;
 - um destino `homolog` pede o nome do banco digitado;
 - um destino `prod` é bloqueado pelo motor, sem opção para liberar;
 - origem e destino no mesmo cluster (pelo `system_identifier`) também são bloqueados.
@@ -514,3 +519,84 @@ todos iguais, em amarelo com "!", e uma cópia concluída parecia ter dado erro.
 
 **Por quê:** o que a pessoa precisa saber primeiro é se deu certo. Misturar "o banco vai ser
 criado" com "a extensão é mais antiga no destino" esconde o que pede ação.
+
+## 2026-09-30: A cópia corrige sozinha o que é seguro, com o SIM do sysadmin
+
+**Decisão do usuário,** que quer o mínimo de trabalho: a ferramenta sugere, resolve, e ele só
+aprova ou não.
+
+**Decidido:** três correções, na confirmação, aplicadas pelo mesmo `y` que confirma a cópia
+(docs/ESTRATEGIA.md §10):
+1. **apagar o `__novo` que sobrou** de uma cópia anterior. Vem marcada, e desmarcada bloqueia.
+   ~~Vem desmarcada se uma cópia espera a decisão da troca dele~~ **(ajustado pela revisão, na
+   entrada seguinte:** só é oferecida quando é seguro; senão, bloqueia**)**;
+2. **criar as roles que faltam** no destino (as que a RLS e os user mappings da origem citam), sem
+   login e sem senha. Vem marcada. Substitui o aviso que mandava criá-las à mão;
+3. **tirar os user mappings dos servidores externos** do banco copiado, antes da troca. Vem sempre
+   desmarcada, por decisão do usuário.
+
+Na execução, uma correção só vale como foi confirmada e com os mesmos nomes. Sem a tela, nenhuma é
+aplicada. O `__novo` é apagado pela mesma função da aba Anteriores (`apagarBanco`), que confere de
+novo que o banco é da ferramenta e de nenhum perfil.
+
+**Por quê:**
+- **Roles.** Com `--no-owner --no-privileges`, só a RLS e os user mappings dependem de roles. Uma role
+  sem login e sem senha faz a política existir sem abrir uma porta.
+- **`__novo`.** É um artefato da própria ferramenta: pedir para ir à aba 5 só dava trabalho.
+- **FDW.** Os user mappings carregam as credenciais dos servidores externos, e o dev ganharia acesso
+  a eles, muitas vezes outra produção. Vem desmarcada porque há quem precise deles no dev.
+
+**O que ficou de fora:** instalar ou atualizar pacote no servidor, que vira aviso com a
+orientação, e aprovar um servidor como destino, que continua um passo separado (a tecla `v`), porque
+é a barreira contra cadastrar uma produção por engano.
+
+## 2026-09-30: O que a revisão adversarial mudou antes de fechar
+
+**Pedido do usuário:** uma revisão adversarial com vários agentes antes de fechar a versão. Seis
+frentes: a segurança da origem e da produção, o túnel com TLS, as correções, a tela, o cadastro e
+o processo, e a documentação contra o código. Cada achado foi conferido no código antes de mudar.
+
+**Decidido:**
+- **A correção do `__novo` só é oferecida quando é seguro.** O `__novo` nasce com um comentário
+  que diz a instalação e a execução, e a correção exige essa marca desta instalação, uma cópia que
+  já terminou e não espera a troca (pelo nome da conexão ou pelo servidor), e ninguém conectado
+  nele. Senão, bloqueia, como antes. A marca sai antes da troca e não chega ao banco de destino.
+  *Por quê:* duas instalações no mesmo servidor, ou uma cópia esperando a decisão, perderiam o
+  `__novo` delas.
+- **Uma correção marcada que mudou pede outra confirmação,** em vez de ser descartada em silêncio.
+  No `__novo`, "a mesma" é o mesmo OID, conferido de novo na hora de apagar, com as sessões.
+- **Num grupo, a correção do `__novo` fica desmarcada:** num grupo nada é apagado, como já dizia a
+  estratégia. Um perfil marcado sozinho vira uma cópia comum, com a confirmação dela.
+- **A restauração oferece a correção dos user mappings:** o manifesto do dump guarda os servidores
+  externos.
+- **O `verify-ca` pelo túnel é recusado.** Contra as CAs do sistema, conferir a cadeia sem o nome
+  aceita qualquer certificado público (o libpq recusa a mesma combinação). Ficam o `verify-full` e o
+  `require`.
+- **No `prefer`, o túnel tenta de novo em claro** quando o banco recusa logo depois do TLS, como o
+  libpq e o pgx. Era uma regressão da v0.3.1 para quem tem `hostnossl`.
+- **O túnel limpa os caracteres de controle** do erro que manda ao cliente (o texto de um
+  certificado entra nele), **manda o motivo quando o canal até o banco não abre** (`08006`, a camada
+  "Canal" do diagnóstico), e, sem TLS, **só abre o canal quando o cliente fala** (uma sondagem que
+  abre e fecha não chega ao banco).
+- **Erros fixos (senha, `pg_hba`, TLS recusado) não são tentados de novo** como queda de rede.
+- **A base anterior só sai depois de a nova existir** (`<banco>__base_velha` no meio); se a nova
+  falha, a anterior volta e a troca espera a decisão. Um `__base` que é banco de um perfil nunca é
+  substituído.
+- **A execução confere o `system_identifier` do destino** ao reabri-lo para o trabalho, e o link
+  instável para quando a origem reaberta é outro servidor.
+- **O plano confere que a sessão com a origem ficou só de leitura,** e avisa se não ficou.
+- **Um perfil ou uma conexão novos com o nome de outro são recusados** (antes, sobrescreviam).
+  Renomear uma conexão leva as execuções junto.
+- **A tela roda uma tarefa de cada vez,** e um plano ou uma pergunta que chegam com outra janela
+  aberta não abrem por cima (uma tecla dada para uma confirmaria a outra). Num dev sem listas, o
+  `y` confirma (o foco padrão o tratava como letra). Com o filtro aberto no seletor, o enter marca
+  a etiqueta em destaque.
+- **O processo:** o cancelamento repete o `docker stop` até o container parar (um cancelamento antes
+  de o container existir se perdia); a conferência de processos mortos não sobrescreve um fim já
+  gravado, e não apaga o pgpass de uma cópia viva quando o cadastro está ocupado; o `--dir` vira
+  caminho absoluto; o `rodar` limpa as execuções mortas ao começar e pode ser cancelado pela tela.
+
+**Ficou de fora, anotado:** o `verify-full` com uma CA própria ou com o nome do certificado
+diferente do host cadastrado (falta um campo como o `sslrootcert`); certificados que o crypto/tls do
+Go recusa e o libpq aceita (só com CN, sem SAN); a tela do plano cortada num terminal de 80x24 com
+muitas correções e anteriores.

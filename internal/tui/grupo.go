@@ -59,6 +59,13 @@ func (m *Model) copiarGrupo(nomes []string) tea.Cmd {
 				if err != nil {
 					return nil, err // uma pergunta: a tela pergunta e checa o grupo todo de novo
 				}
+				// Num grupo, nada é apagado: a correção do __novo que sobrou fica desmarcada (e o
+				// perfil, bloqueado), e ele se resolve na cópia sozinha ou na aba Anteriores.
+				for i := range p.Correcoes {
+					if p.Correcoes[i].Tipo == motor.CorrecaoNovo {
+						p.Correcoes[i].Marcada = false
+					}
+				}
 				ps = append(ps, p)
 			}
 			return ps, nil
@@ -69,6 +76,10 @@ func (m *Model) copiarGrupo(nomes []string) tea.Cmd {
 				return nil
 			}
 			m.recarregar()
+			if m.janelaAberta() {
+				m.status = "a checagem do grupo terminou com outra janela aberta: feche-a e tecle enter de novo"
+				return nil
+			}
 			g := &telaGrupo{planos: v.([]motor.Plano)}
 			g.entrada = textinput.New()
 			g.entrada.Prompt = "› "
@@ -154,7 +165,7 @@ func (g *telaGrupo) corpo(w int) string {
 		if p.Destino.Existe {
 			b.WriteString("   " + stPerigoV.Render("vai ser SUBSTITUÍDO") + stDica.Render(" (o atual vira "+nomes.PrefixoAnteriores(p.Destino.Banco)+"<data>)") + "\n")
 		}
-		for _, x := range p.Bloqueios {
+		for _, x := range p.BloqueiosAtivos() {
 			b.WriteString(quebrar(stPerigoV.Render("   ✖ "), stTexto.Render(x), w) + "\n")
 		}
 		for _, x := range p.Avisos {
@@ -162,6 +173,17 @@ func (g *telaGrupo) corpo(w int) string {
 		}
 		for _, x := range p.Notas {
 			b.WriteString(quebrar(stDica.Render("   · "), stDica.Render(x), w) + "\n")
+		}
+		// Num grupo, as correções seguem o padrão do plano: as marcadas vão junto com a cópia.
+		for _, c := range p.Correcoes {
+			if c.Bloqueia && !c.Marcada {
+				continue // já aparece entre os bloqueios
+			}
+			if c.Marcada {
+				b.WriteString(quebrar(stOk.Render("   ✔ corrige: "), stTexto.Render(c.Texto), w) + "\n")
+			} else {
+				b.WriteString(quebrar(stAvisoV.Render("   ☐ não corrige: "), stDica.Render(c.SeNao), w) + "\n")
+			}
 		}
 		if len(p.Anteriores) > 0 {
 			var t int64

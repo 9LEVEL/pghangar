@@ -330,7 +330,12 @@ func processoDe(e cadastro.Execucao) bool {
 		b, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", e.PID))
 		return err == nil && bytes.Contains(b, []byte("\x00executar\x00")) && bytes.Contains(b, []byte("\x00--grupo\x00"+e.Grupo+"\x00"))
 	}
-	return processoDaExecucao(e.PID, e.ID)
+	if processoDaExecucao(e.PID, e.ID) {
+		return true
+	}
+	// O pghangar rodar (o cron) roda a cópia no próprio processo: o perfil é o último argumento.
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", e.PID))
+	return err == nil && bytes.Contains(b, []byte("\x00rodar\x00")) && bytes.HasSuffix(b, []byte("\x00"+e.Perfil+"\x00"))
 }
 
 // processoDaExecucao confere pelo /proc que o pid é mesmo o "executar" daquela execução: um pid
@@ -362,15 +367,17 @@ func Conferir(ctx context.Context, cad *cadastro.Cadastro, dir local.Dir) error 
 		if !trava.Livre(dir.Travas(), chaveTrava(e), e.Banco) {
 			continue
 		}
-		e.Estado, e.Fim = cadastro.EstadoInterrompida, time.Now()
-		e.Mensagem = "o processo da execução terminou sem registrar o fim, na etapa " + e.Etapa + " (veja o log)"
-		if e.Etapa == "" {
-			e.Mensagem = "o processo do grupo terminou antes desta cópia começar"
+		msg := "o processo da execução terminou sem registrar o fim, na etapa " + e.Etapa + " (veja o log)"
+		switch {
+		case e.Etapa == "" && e.Grupo != "":
+			msg = "o processo do grupo terminou antes desta cópia começar"
+		case e.Etapa == "":
+			msg = "o processo da execução terminou antes de a cópia começar (veja o log)"
 		}
 		if e.BancoNovo != "" {
-			e.Mensagem += fmt.Sprintf("; o banco %s pode ter ficado no destino", e.BancoNovo)
+			msg += fmt.Sprintf("; o banco %s pode ter ficado no destino", e.BancoNovo)
 		}
-		if err := cad.GravarExecucao(ctx, e); err != nil {
+		if _, err := cad.Interromper(ctx, e.ID, msg); err != nil {
 			return err
 		}
 	}
@@ -392,8 +399,10 @@ func limparPgpass(ctx context.Context, cad *cadastro.Cadastro, dir local.Dir) {
 		if err != nil {
 			continue
 		}
+		// Só sai o pgpass de uma execução que terminou ou que não existe: um erro na leitura (o
+		// cadastro ocupado) não apaga a senha de uma cópia viva.
 		e, err := cad.Execucao(ctx, id)
-		if err == nil && !e.Terminou() {
+		if (err != nil && !errors.Is(err, cadastro.ErrNaoExiste)) || (err == nil && !e.Terminou()) {
 			continue
 		}
 		_ = os.Remove(m)

@@ -240,7 +240,7 @@ func (r *corrida) dumpBlocos(ctx context.Context) error {
 		}
 		m = Manifesto{Perfil: p.Perfil.Nome, Execucao: r.e.ID, Estado: DumpIncompleto, Inicio: time.Now(), Origem: p.Origem,
 			Imagem: p.Imagem, ImagemRef: p.ImagemRef, Cliente: p.Cliente, SemDados: p.Perfil.SemDados, Contagem: p.Contagem,
-			Filtrado: p.Perfil.Filtrado(), Formato: FormatoBlocos, Extensoes: p.Extensoes, Citadas: p.Citadas,
+			Filtrado: p.Perfil.Filtrado(), Formato: FormatoBlocos, Extensoes: p.Extensoes, Citadas: p.Citadas, Externos: p.Externos,
 			Filtros: Filtros{Schemas: p.Perfil.Schemas, SchemasFora: p.Perfil.SchemasFora, Tabelas: p.Perfil.Tabelas, TabelasFora: p.Perfil.TabelasFora}}
 		if err := EscreverManifesto(r.trabalho, m); err != nil {
 			return err
@@ -279,7 +279,7 @@ func (r *corrida) dumpBlocos(ctx context.Context) error {
 		}
 		if err := r.reabrirOrigem(ctx); err != nil {
 			var pg *Pergunta
-			if errors.As(err, &pg) {
+			if errors.As(err, &pg) || errors.Is(err, errOrigemOutra) {
 				return err
 			}
 			// A origem pode demorar a voltar: a próxima volta do laço tenta de novo.

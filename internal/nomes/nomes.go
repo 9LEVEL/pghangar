@@ -48,6 +48,9 @@ const SufixoBase = "__base"
 // BancoBase é o banco base do destino.
 func BancoBase(banco string) string { return Base(banco) + SufixoBase }
 
+// BaseVelha é a base anterior enquanto a nova é criada: ela só é apagada depois.
+func BaseVelha(banco string) string { return Base(banco) + SufixoBase + "_velha" }
+
 // Anterior é o nome que o destino ganha na troca.
 func Anterior(banco string, quando time.Time) string {
 	return Base(banco) + MarcaAnterior + quando.Format(FormatoData)
@@ -72,7 +75,7 @@ func DataDoAnterior(banco, nome string) (time.Time, bool) {
 // EhDaFerramenta diz se o nome é um __novo ou um __anterior do banco: só esses a ferramenta aceita
 // apagar ou trocar.
 func EhDaFerramenta(banco, nome string) bool {
-	if nome == Novo(banco) || nome == BancoBase(banco) {
+	if nome == Novo(banco) || nome == BancoBase(banco) || nome == BaseVelha(banco) {
 		return true
 	}
 	_, ok := DataDoAnterior(banco, nome)

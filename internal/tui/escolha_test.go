@@ -221,3 +221,20 @@ func TestCtrlRReleOsBancos(t *testing.T) {
 		t.Fatalf("aviso do ctrl+r: %q", a)
 	}
 }
+
+// Com o filtro aberto, o enter marca a etiqueta em destaque (como o espaço) e não salva sem ela.
+func TestEnterComFiltroMarca(t *testing.T) {
+	m := seletorDaOrigem(t)
+	digitar(m, "rh")
+	tecla(m, "enter")
+	if !m.form.ativo || !reflect.DeepEqual(m.form.valores("origem_banco"), []string{"rh"}) {
+		t.Fatalf("o enter com filtro marca e não salva: ativo=%v %v", m.form.ativo, m.form.valores("origem_banco"))
+	}
+	tecla(m, "enter")
+	if m.form.ativo {
+		t.Fatalf("o segundo enter salva: %s", m.form.erro)
+	}
+	if _, err := m.o.Cadastro.Perfil(context.Background(), "rh-homolog"); err != nil {
+		t.Fatal(err)
+	}
+}

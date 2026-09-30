@@ -454,3 +454,87 @@ func TestConexaoNovaExigeATag(t *testing.T) {
 		t.Fatal("gravou sem tag")
 	}
 }
+
+// As correções aparecem marcadas pelo padrão, o espaço desmarca, e o que vai para a execução é o
+// que ficou marcado. A do __novo, desmarcada, bloqueia.
+func TestPlanoComCorrecoes(t *testing.T) {
+	p := planoHomolog()
+	p.Destino.Tag = cadastro.TagDev
+	p.Anteriores = nil
+	p.Correcoes = []motor.Correcao{
+		{Tipo: motor.CorrecaoNovo, Texto: "apagar o loja__novo", SeNao: "sobrou o loja__novo", Nomes: []string{"loja__novo"}, Marcada: true, Bloqueia: true},
+		{Tipo: motor.CorrecaoRoles, Texto: "criar a role auditor", SeNao: "o restore dá erro", Nomes: []string{"auditor"}, Marcada: true},
+		{Tipo: motor.CorrecaoFDW, Texto: "tirar os user mappings de erp", SeNao: "o destino entra no erp", Nomes: []string{"erp"}},
+	}
+	f := &falsos{plano: p}
+	m := novoTeste(t, f)
+	m.seg.GuardarSenha("prod", "s")
+	tecla(m, "enter")
+	if m.plano == nil {
+		t.Fatal("o plano deveria abrir")
+	}
+	if v := m.View(); !strings.Contains(v, "CORREÇÕES (3)") || !strings.Contains(v, "[✔]") || !strings.Contains(v, "sem ela:") {
+		t.Fatalf("as correções deveriam aparecer:\n%s", v)
+	}
+	tecla(m, " ", "y") // desmarca a do __novo: bloqueia
+	if len(f.iniciados) != 0 || !strings.Contains(m.plano.erro, "bloqueado") {
+		t.Fatalf("sem a correção do __novo, a cópia não começa: %q", m.plano.erro)
+	}
+	tecla(m, " ", "down", "down", " ", "y") // marca de novo, e marca a do FDW
+	if len(f.iniciados) != 1 {
+		t.Fatal("a cópia deveria começar")
+	}
+	var marcadas []string
+	for _, c := range f.iniciados[0].Plano.Correcoes {
+		if c.Marcada {
+			marcadas = append(marcadas, c.Tipo)
+		}
+	}
+	if strings.Join(marcadas, ",") != "novo,roles,fdw" {
+		t.Fatalf("as marcas confirmadas: %v", marcadas)
+	}
+}
+
+// Achado da revisão: num dev sem correções e sem anteriores (a primeira cópia de um banco), o y
+// tem de confirmar.
+func TestDevSemListasConfirmaComY(t *testing.T) {
+	p := planoHomolog()
+	p.Destino.Tag, p.Anteriores, p.Correcoes = cadastro.TagDev, nil, nil
+	f := &falsos{plano: p}
+	m := novoTeste(t, f)
+	m.seg.GuardarSenha("prod", "s")
+	tecla(m, "enter", "y")
+	if len(f.iniciados) != 1 {
+		t.Fatal("o y deveria confirmar a cópia num dev sem listas")
+	}
+}
+
+// Uma tarefa de cada vez, e um plano que chega com outra janela aberta não a substitui.
+func TestUmaTarefaDeCadaVezEPlanoNaoAbrePorCima(t *testing.T) {
+	p := planoHomolog()
+	f := &falsos{plano: p}
+	m := novoTeste(t, f)
+	m.seg.GuardarSenha("prod", "s")
+	m.ocupado = "outra tarefa"
+	tecla(m, "enter")
+	if len(f.segVistos) != 0 || !strings.Contains(m.status, "espere") {
+		t.Fatalf("com uma tarefa rodando, outra não começa: %q", m.status)
+	}
+	m.ocupado = ""
+	tecla(m, "a") // o formulário do perfil novo
+	m.abrirPlano(p)
+	if m.plano != nil || !strings.Contains(m.status, "outra janela aberta") {
+		t.Fatalf("o plano não abre por cima do formulário: %q", m.status)
+	}
+}
+
+// Um grupo de um perfil só é uma cópia comum, com a confirmação dela.
+func TestGrupoDeUmPerfilECopiaComum(t *testing.T) {
+	f := &falsos{plano: planoHomolog()}
+	m := novoTeste(t, f)
+	m.seg.GuardarSenha("prod", "s")
+	tecla(m, " ", "up", "enter")
+	if m.grupo != nil || m.plano == nil {
+		t.Fatal("um perfil marcado sozinho abre o plano da cópia, e não o do grupo")
+	}
+}

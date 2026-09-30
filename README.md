@@ -8,9 +8,10 @@ perfil e confirmar.
 O nome: o hangar é onde o avião fica guardado e é preparado para voar, ao lado da torre (o
 [pgtower](https://github.com/9LEVEL/pgtower)).
 
-> **Estado: fases 1, 2 e 3 prontas** (docs/ESTRATEGIA.md §16), testadas só em localhost: matriz
+> **Estado: fases 1, 2 e 3 prontas** (docs/ESTRATEGIA.md §16), testadas em localhost: matriz
 > 16/17/18, túnel SSH (e bastion), link instável retomável, grupos, base e reset, processo separado,
-> cancelamento e processo morto. Ainda não usada contra servidores reais.
+> cancelamento e processo morto. Em uso contra um servidor real desde 2026-09-30 (a produção por
+> túnel SSH com TLS, para um dev).
 
 | | |
 |---|---|

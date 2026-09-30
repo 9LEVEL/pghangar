@@ -108,7 +108,13 @@ func (e *escolha) textos(f *formulario) []string {
 func (e *escolha) tecla(f *formulario, k tea.KeyMsg) (resultadoForm, tea.Cmd, bool) {
 	its := e.visiveis(f)
 	e.cursor = limitar(e.cursor, 0, len(its)-1)
-	switch k.String() {
+	tecla := k.String()
+	// Com o filtro aberto, o enter marca a etiqueta em destaque, como o espaço, em vez de salvar o
+	// formulário sem ela: o segundo enter salva.
+	if tecla == "enter" && e.filtro != "" {
+		tecla = " "
+	}
+	switch tecla {
 	case "esc":
 		if e.filtro == "" {
 			return formNada, nil, false
@@ -124,7 +130,7 @@ func (e *escolha) tecla(f *formulario, k tea.KeyMsg) (resultadoForm, tea.Cmd, bo
 		return formNada, nil, true
 	case "up", "down":
 		d := 1
-		if k.String() == "up" {
+		if tecla == "up" {
 			d = -1
 		}
 		// Na primeira ou na última linha, as setas saem para o campo vizinho, como nos outros.
@@ -387,9 +393,7 @@ func (e *escolha) teclas() string {
 		ts = append(ts, "ctrl+r relê")
 	}
 	if e.filtro != "" {
-		ts = append(ts, "esc limpa o filtro")
-	} else {
-		ts = append(ts, "esc cancelar")
+		return strings.Join(append(ts, "enter marca", "esc limpa o filtro", "tab campos"), " · ")
 	}
-	return strings.Join(append(ts, "tab campos", "enter salvar"), " · ")
+	return strings.Join(append(ts, "esc cancelar", "tab campos", "enter salvar"), " · ")
 }

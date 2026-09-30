@@ -503,6 +503,10 @@ func (x Conexao) Validar() error {
 			return errors.New("com túnel, o banco precisa de host e porta TCP (o socket não atravessa o túnel)")
 		case x.SaltoHost != "" && (x.SaltoPorta <= 0 || x.SaltoPorta > 65535 || strings.TrimSpace(x.SaltoUsuario) == ""):
 			return errors.New("com bastion, informe a porta e o usuário dele")
+		case x.SSLMode == "verify-ca":
+			// Pelo túnel, a cadeia é conferida contra as CAs do sistema, e sem o nome isso aceita
+			// qualquer certificado público (o libpq recusa a mesma combinação).
+			return errors.New("verify-ca pelo túnel aceitaria qualquer certificado público: use verify-full (que confere também o nome) ou require")
 		}
 	}
 	return nil
@@ -540,9 +544,21 @@ func (c *Cadastro) SalvarConexao(ctx context.Context, antigo string, x Conexao) 
 	if x.ModoSenha != SenhaGuardar {
 		x.Senha = ""
 	}
+	if antigo == "" {
+		// Uma conexão nova com o nome de outra não a sobrescreve.
+		if existe, err := existeNome(ctx, tx, "conexoes", x.Nome); err != nil {
+			return err
+		} else if existe {
+			return errors.New("já existe uma conexão com o nome " + x.Nome)
+		}
+	}
 	if antigo != "" && antigo != x.Nome {
 		if _, err := tx.ExecContext(ctx, `UPDATE conexoes SET nome = ? WHERE nome = ?`, x.Nome, antigo); err != nil {
 			return traduzir(err, "já existe uma conexão com o nome "+x.Nome)
+		}
+		// As execuções guardam o nome da conexão de destino: a troca adiada e o desfazer a abrem por ele.
+		if _, err := tx.ExecContext(ctx, `UPDATE execucoes SET destino = ? WHERE destino = ?`, x.Nome, antigo); err != nil {
+			return err
 		}
 	}
 	_, err = tx.ExecContext(ctx, `
@@ -690,6 +706,13 @@ func (p *Perfil) normalizar() {
 	p.Tabelas, p.TabelasFora = limpar(p.Tabelas), limpar(p.TabelasFora)
 }
 
+// existeNome diz se a tabela (perfis ou conexoes) já tem uma linha com o nome.
+func existeNome(ctx context.Context, tx *sql.Tx, tabela, nome string) (bool, error) {
+	var n int
+	err := tx.QueryRowContext(ctx, "SELECT count(*) FROM "+tabela+" WHERE nome = ?", nome).Scan(&n)
+	return n > 0, err
+}
+
 // SalvarPerfil grava um perfil novo ou alterado, e recusa um destino prod.
 func (c *Cadastro) SalvarPerfil(ctx context.Context, antigo string, p Perfil) error {
 	p.normalizar()
@@ -719,6 +742,15 @@ func (c *Cadastro) SalvarPerfil(ctx context.Context, antigo string, p Perfil) er
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if antigo == "" {
+		// Um perfil novo com o nome de outro não o sobrescreve: o antigo perderia o script, a base e
+		// o resto das opções sem ninguém ver.
+		if existe, err := existeNome(ctx, tx, "perfis", p.Nome); err != nil {
+			return err
+		} else if existe {
+			return errors.New("já existe um perfil com o nome " + p.Nome)
+		}
+	}
 	if antigo != "" && antigo != p.Nome {
 		r, err := tx.ExecContext(ctx, `UPDATE perfis SET nome = ? WHERE nome = ?`, p.Nome, antigo)
 		if err != nil {
@@ -935,6 +967,19 @@ func (c *Cadastro) NovaExecucao(ctx context.Context, e Execucao) (int64, error) 
 		return 0, err
 	}
 	return r.LastInsertId()
+}
+
+// Interromper marca a execução como interrompida, mas só se ela ainda não terminou: um processo que
+// gravou o fim entre a leitura e esta escrita não tem o fim sobrescrito.
+func (c *Cadastro) Interromper(ctx context.Context, id int64, mensagem string) (bool, error) {
+	agora := texto(time.Now())
+	r, err := c.db.ExecContext(ctx, `UPDATE execucoes SET estado = ?, fim = ?, mensagem = ?, atualizada_em = ?
+		WHERE id = ? AND estado IN (?, ?, ?)`, EstadoInterrompida, agora, mensagem, agora, id, EstadoIniciando, EstadoRodando, EstadoFila)
+	if err != nil {
+		return false, err
+	}
+	n, err := r.RowsAffected()
+	return n > 0, err
 }
 
 // GravarExecucao regrava a execução inteira.

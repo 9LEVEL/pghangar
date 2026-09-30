@@ -199,6 +199,10 @@ func (d Docker) Rodar(ctx context.Context, e Execucao, linha Linha) (int, error)
 	if err != nil {
 		return -1, err
 	}
+	// Cancelado antes de começar, o container nem sobe.
+	if err := ctx.Err(); err != nil {
+		return -1, err
+	}
 	if err := cmd.Start(); err != nil {
 		return -1, err
 	}
@@ -231,11 +235,19 @@ func (d Docker) Rodar(ctx context.Context, e Execucao, linha Linha) (int, error)
 	case err := <-fim:
 		return codigo(err)
 	case <-ctx.Done():
-		c, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		_, _ = d.saida(c, "stop", "--time", "5", e.Nome)
-		cancel()
-		<-fim
-		return -1, ctx.Err()
+		// O stop se repete até o docker run sair: um cancelamento que chega antes de o container
+		// existir (o stop responde "No such container") não pode se perder, e o container, depois,
+		// rodaria até o fim.
+		for {
+			c, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			_, _ = d.saida(c, "stop", "--time", "5", e.Nome)
+			cancel()
+			select {
+			case <-fim:
+				return -1, ctx.Err()
+			case <-time.After(2 * time.Second):
+			}
+		}
 	}
 }
 

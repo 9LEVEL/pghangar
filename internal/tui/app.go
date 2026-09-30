@@ -185,6 +185,12 @@ type msgTarefa struct {
 }
 
 func (m *Model) executar(t *tarefa) tea.Cmd {
+	// Uma tarefa de cada vez: duas ao mesmo tempo abririam janelas uma por cima da outra, e uma
+	// tecla dada para uma confirmaria a outra.
+	if m.ocupado != "" {
+		m.status = "espere terminar: " + m.ocupado
+		return nil
+	}
 	m.ocupado = t.rotulo
 	seg := copiar(m.seg)
 	return func() tea.Msg {
@@ -308,6 +314,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgTarefa:
 		m.ocupado = ""
 		if p := perguntaDe(msg.err); p != nil {
+			// Com outra janela aberta, a pergunta (a chave de um servidor SSH, uma senha) não abre
+			// por cima: as teclas dadas para a janela responderiam a ela.
+			if m.janelaAberta() {
+				m.status = msg.t.rotulo + ": falta uma resposta, e havia outra janela aberta. Feche-a e tente de novo"
+				return m, nil
+			}
 			return m, m.perguntar(p, msg.t)
 		}
 		return m, msg.t.pronto(m, msg.v, msg.err)

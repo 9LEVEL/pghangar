@@ -616,7 +616,21 @@ func TestRestoreComErroEsperaDecisao(t *testing.T) {
 	semear(t, o, "loja4", `CREATE POLICY so_prod ON public.segredo TO so_na_prod USING (true)`)
 	a.perfil(t, "p", "prod", "loja4", "dev", "loja4")
 
-	e := a.copiar(t, ctx, "p")
+	// A correção criaria a role no destino; aqui o sysadmin a desmarca, e o restore dá erro na
+	// política.
+	copiarSemCorrecoes := func() cadastro.Execucao {
+		t.Helper()
+		pl, err := Planejar(ctx, a.d, "p")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c, ok := pl.correcao(CorrecaoRoles); !ok || !c.Marcada || !mesmosNomes(c.Nomes, []string{"so_na_prod"}) {
+			t.Fatalf("a correção da role: %+v", pl.Correcoes)
+		}
+		pl.DesmarcarCorrecoes()
+		return a.executar(t, ctx, pl)
+	}
+	e := copiarSemCorrecoes()
 	if e.Estado != cadastro.EstadoAguardando || e.ErrosRestore == 0 {
 		t.Fatalf("%s %d %s\n%s", e.Estado, e.ErrosRestore, e.Mensagem, a.log.String())
 	}
@@ -653,7 +667,7 @@ func TestRestoreComErroEsperaDecisao(t *testing.T) {
 	if err := Apagar(ctx, a.d, "dev", "loja4", "loja4__novo"); err != nil {
 		t.Fatal(err)
 	}
-	e = a.copiar(t, ctx, "p")
+	e = copiarSemCorrecoes()
 	if e.Estado != cadastro.EstadoAguardando {
 		t.Fatalf("%s %s", e.Estado, e.Mensagem)
 	}
@@ -663,7 +677,7 @@ func TestRestoreComErroEsperaDecisao(t *testing.T) {
 	if ex, _ := a.cad.Execucao(ctx, e.ID); ex.Estado != cadastro.EstadoErro || !strings.Contains(ex.Mensagem, "apagado") {
 		t.Fatalf("a execução que aguardava o __novo apagado: %s %s", ex.Estado, ex.Mensagem)
 	}
-	e = a.copiar(t, ctx, "p")
+	e = copiarSemCorrecoes()
 	if e.Estado != cadastro.EstadoAguardando {
 		t.Fatalf("%s %s", e.Estado, e.Mensagem)
 	}
@@ -725,10 +739,14 @@ func TestScriptPosRestore(t *testing.T) {
 	if n := valor[int64](t, d, "postgres", `SELECT count(*) FROM pg_roles WHERE rolname LIKE 'copia\_banco\_%'`); n != 0 {
 		t.Fatal("sobrou role temporária depois do script com erro")
 	}
-	// O __novo ficou e bloqueia a próxima cópia até ser apagado.
+	// O __novo ficou: a próxima cópia oferece apagá-lo (marcada) e, sem a correção, fica bloqueada.
 	p, _ := Planejar(ctx, a.d, "ruim")
-	if !p.NovoExiste || !p.Bloqueado() {
-		t.Fatalf("o __novo que sobrou deveria bloquear: %v", p.Bloqueios)
+	if c, ok := p.correcao(CorrecaoNovo); !p.NovoExiste || !ok || !c.Marcada || p.Bloqueado() {
+		t.Fatalf("o __novo que sobrou deveria virar correção marcada: %+v", p.Correcoes)
+	}
+	p.DesmarcarCorrecoes()
+	if !p.Bloqueado() {
+		t.Fatalf("sem a correção, o __novo que sobrou bloqueia: %v", p.BloqueiosAtivos())
 	}
 	if err := Apagar(ctx, a.d, "homolog", "loja5b", "loja5b__novo"); err != nil {
 		t.Fatal(err)
@@ -1041,12 +1059,12 @@ func TestFiltrosCompressaoELinhas(t *testing.T) {
 		t.Fatalf("o script roda depois da conferência: %s %s", e.Estado, e.Mensagem)
 	}
 
-	// As roles que a RLS cita e o destino não tem: aviso no plano.
+	// As roles que a RLS cita e o destino não tem: uma correção marcada no plano.
 	sql(t, o, "postgres", `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'auditor_prod') THEN CREATE ROLE auditor_prod; END IF; END $$`)
 	sql(t, o, "loja6", `CREATE POLICY aud ON public.segredo TO auditor_prod USING (true)`)
 	p, err := Planejar(ctx, a.d, "sem-log")
-	if err != nil || !strings.Contains(strings.Join(p.Avisos, " "), "auditor_prod") {
-		t.Fatalf("aviso das roles: %v %v", p.Avisos, err)
+	if c, ok := p.correcao(CorrecaoRoles); err != nil || !ok || !c.Marcada || !mesmosNomes(c.Nomes, []string{"auditor_prod"}) {
+		t.Fatalf("correção das roles: %+v %v", p.Correcoes, err)
 	}
 }
 

@@ -119,6 +119,10 @@ type Plano struct {
 	ObjetosGrandes int      `json:"objetos_grandes,omitempty"`
 	Contagem       Contagem `json:"contagem"`
 	Citadas        []string `json:"citadas,omitempty"` // roles que a RLS e os user mappings da origem citam
+	// Externos são os servidores externos (postgres_fdw e afins) com user mappings na origem.
+	Externos []string `json:"externos,omitempty"`
+	// Correcoes são os consertos que a cópia faz sozinha no destino, se marcados (correcoes.go).
+	Correcoes []Correcao `json:"correcoes,omitempty"`
 	// DumpGuardado é o dump que uma restauração usa (vazio numa cópia da origem).
 	DumpGuardado string `json:"dump_guardado,omitempty"`
 	// Reset: o destino é recriado a partir da base, sem ir à origem.
@@ -138,7 +142,7 @@ type Plano struct {
 }
 
 // Bloqueado diz se a cópia não pode começar.
-func (p Plano) Bloqueado() bool { return len(p.Bloqueios) > 0 }
+func (p Plano) Bloqueado() bool { return len(p.BloqueiosAtivos()) > 0 }
 
 // Confirmacao é o que o sysadmin digita para confirmar: o nome do banco num destino homolog; "y"
 // num destino dev.
@@ -430,12 +434,17 @@ func planejar(ctx context.Context, d Deps, nomePerfil string, guardado *Manifest
 		}
 		defer origem.fechar()
 		infoO = origem.c.Info
+		// A sessão só de leitura vem do options da conexão; um pooler na frente pode ignorá-lo.
+		var ro string
+		if err := origem.admin.QueryRow(ctx, "SHOW default_transaction_read_only").Scan(&ro); err != nil || ro != "on" {
+			p.avisar("a origem não aceitou a sessão só de leitura (default_transaction_read_only = %q; um pooler na frente?): a ferramenta continua só lendo, mas sem a proteção do próprio Postgres", ro)
+		}
 		p.Origem = Lado{Conexao: origem.c.Nome, Tag: origem.c.Tag, Onde: origem.c.Onde(), VersaoNum: infoO.VersaoNum, SystemID: infoO.SystemID,
 			Recuperacao: infoO.Recuperacao, Superusuario: infoO.Superusuario, Usuario: origem.c.Usuario, Banco: perfil.OrigemBanco}
 	} else {
 		p.Origem = guardado.Origem
 		infoO = cadastro.Info{VersaoNum: guardado.Origem.VersaoNum, SystemID: guardado.Origem.SystemID, Superusuario: true}
-		p.Contagem, p.Extensoes, p.Citadas = guardado.Contagem, guardado.Extensoes, guardado.Citadas
+		p.Contagem, p.Extensoes, p.Citadas, p.Externos = guardado.Contagem, guardado.Extensoes, guardado.Citadas, guardado.Externos
 	}
 	destino, antesDestino, err := abrirLado(ctx, d, perfil.Destino)
 	if err != nil {
@@ -561,7 +570,9 @@ func planejar(ctx context.Context, d Deps, nomePerfil string, guardado *Manifest
 	}
 	if _, ok := banco(infoD, p.Novo); ok {
 		p.NovoExiste = true
-		p.bloquear("sobrou o banco %s de uma cópia anterior no destino: apague-o na aba Anteriores antes de copiar", p.Novo)
+		if err := oferecerApagarNovo(ctx, d, &p, destino.admin, perfil.Destino); err != nil {
+			return p, err
+		}
 	}
 
 	// A origem por dentro: extensões, tabelas, a contagem e as roles citadas.
@@ -588,8 +599,11 @@ func planejar(ctx context.Context, d Deps, nomePerfil string, guardado *Manifest
 			}
 		}
 		if len(faltam) > 0 {
-			p.avisar("as políticas de RLS (ou os user mappings) da origem citam as roles %s, que não existem no destino: o restore vai dar erro nesses objetos, e a troca vai esperar a sua decisão. Crie as roles no destino antes, para uma cópia limpa", strings.Join(faltam, ", "))
+			oferecerRoles(&p, faltam)
 		}
+	}
+	if len(p.Externos) > 0 {
+		oferecerFDW(&p, p.Externos)
 	}
 
 	// O destino: extensões disponíveis, anteriores e sessões.
@@ -713,6 +727,10 @@ func lerOrigem(ctx context.Context, d Deps, p *Plano, origem *lado, perfil cadas
 	// e as dos user mappings. Sem elas no destino, o restore dá erro nesses objetos.
 	if p.Citadas, err = nomesDe(ctx, cob, `SELECT DISTINCT r.rolname FROM pg_policy p CROSS JOIN LATERAL unnest(p.polroles) AS rid
 		JOIN pg_roles r ON r.oid = rid UNION SELECT DISTINCT usename FROM pg_user_mappings WHERE umuser <> 0 ORDER BY 1`); err != nil {
+		return true, err
+	}
+	// Os servidores externos com credenciais: o dump leva os user mappings junto.
+	if p.Externos, err = nomesDe(ctx, cob, `SELECT DISTINCT srvname FROM pg_user_mappings ORDER BY 1`); err != nil {
 		return true, err
 	}
 	if err := cob.QueryRow(ctx, `SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -947,7 +965,9 @@ func PlanejarReset(ctx context.Context, d Deps, nomePerfil string) (Plano, error
 	}
 	if _, ok := banco(infoD, p.Novo); ok {
 		p.NovoExiste = true
-		p.bloquear("sobrou o banco %s de uma cópia anterior no destino: apague-o na aba Anteriores antes", p.Novo)
+		if err := oferecerApagarNovo(ctx, d, &p, destino.admin, perfil.Destino); err != nil {
+			return p, err
+		}
 	}
 	usados, err := bancosDePerfis(ctx, d, perfil.Destino)
 	if err != nil {

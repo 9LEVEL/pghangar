@@ -240,7 +240,9 @@ func explicarCamada(c string) string {
 	case "Túnel":
 		return "O SSH entrou, mas não abriu o caminho até o banco: confira o permitopen do authorized_keys e o endereço do banco visto do servidor SSH (normalmente 127.0.0.1)."
 	case "TLS":
-		return "O túnel chegou ao banco, mas não conseguiu o TLS que o sslmode pede. O erro diz se o servidor não tem TLS ou se o certificado não confere (verify-ca e verify-full usam as CAs do sistema)."
+		return "O túnel chegou ao banco, mas não conseguiu o TLS que o sslmode pede. O erro diz se o servidor não tem TLS ou se o certificado não confere (verify-full usa as CAs do sistema e o host do banco como cadastrado)."
+	case "Canal":
+		return "O túnel está aberto, mas o servidor SSH não abriu o caminho até o banco nesta conexão: o banco caiu, ou recusou a conexão."
 	case "Autenticação":
 		return "Confira o usuário e a senha do banco, e o pg_hba.conf do servidor. \"no encryption\" no erro quer dizer que o pg_hba pede TLS (hostssl): use sslmode require."
 	case "Banco":
@@ -373,7 +375,7 @@ func (a *abaConexoes) formulario(m *Model, c cadastro.Conexao, antigo string) te
 		novoCampo("usuario", "Usuário do banco", c.Usuario, "Um superusuário: a ferramenta é de sysadmin.", obrig),
 		campoDeOpcao("modo_senha", "Senha", "guardar: no cadastro. perguntar: a cada sessão, só na memória. pgpass: do ~/.pgpass do root.", cadastro.ModosSenha, c.ModoSenha),
 		campoDeSegredo("senha", "Senha do banco", ajudaSenha, nil),
-		campoDeOpcao("sslmode", "sslmode", "require quando o servidor tem TLS. Pelo túnel, quem negocia o TLS com o banco é o túnel (o SSH só cifra até o servidor SSH), e verify-ca e verify-full usam as CAs do sistema.", cadastro.SSLModes, c.SSLMode),
+		campoDeOpcao("sslmode", "sslmode", "require quando o servidor tem TLS. Pelo túnel, quem negocia o TLS com o banco é o túnel (o SSH só cifra até o servidor SSH); verify-full confere o certificado pelas CAs do sistema e contra o host do banco como cadastrado (use o nome que está no certificado, e não 127.0.0.1). verify-ca não vale pelo túnel.", cadastro.SSLModes, c.SSLMode),
 		novoCampo("banco_admin", "Banco administrativo", c.BancoAdmin, "O banco usado para ler o servidor e criar/renomear bancos (normalmente postgres).", obrig),
 	}
 	campos[1].validar = func(s string) error {

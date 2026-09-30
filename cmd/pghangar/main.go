@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"syscall"
@@ -101,7 +102,21 @@ func rodar(args []string) error {
 	if fs.NArg() > 0 {
 		return fmt.Errorf("comando desconhecido: %s (veja pghangar ajuda)", fs.Arg(0))
 	}
-	return tela(local.Dir{Raiz: *dir})
+	d, err := dirDe(*dir)
+	if err != nil {
+		return err
+	}
+	return tela(d)
+}
+
+// dirDe é o diretório da ferramenta em caminho absoluto: os volumes do Docker e o socket do túnel
+// não aceitam caminho relativo.
+func dirDe(s string) (local.Dir, error) {
+	abs, err := filepath.Abs(s)
+	if err != nil {
+		return local.Dir{}, fmt.Errorf("--dir %s: %w", s, err)
+	}
+	return local.Dir{Raiz: abs}, nil
 }
 
 const ajuda = `pghangar: copia bancos PostgreSQL (16, 17, 18) por dump e restore, em containers.
@@ -152,7 +167,10 @@ func executar(args []string) error {
 	if *id <= 0 && *grupo == "" {
 		return errors.New("informe --execucao ou --grupo")
 	}
-	d := local.Dir{Raiz: *dir}
+	d, err := dirDe(*dir)
+	if err != nil {
+		return err
+	}
 	cad, err := abrir(d)
 	if err != nil {
 		return err
@@ -208,12 +226,18 @@ func rodarPerfil(args []string) error {
 		return errors.New("use: pghangar rodar [--confirmar BANCO] PERFIL")
 	}
 	nome := fs.Arg(0)
-	d := local.Dir{Raiz: *dir}
+	d, err := dirDe(*dir)
+	if err != nil {
+		return err
+	}
 	cad, err := abrir(d)
 	if err != nil {
 		return err
 	}
 	defer cad.Fechar()
+	// Sem a tela aberta, ninguém mais limpa o que um rodar morto deixou (a execução "rodando", o
+	// pgpass): esta chamada limpa.
+	_ = execucao.Conferir(context.Background(), cad, d)
 	signal.Ignore(syscall.SIGHUP)
 	ctx, parar := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer parar()
@@ -234,8 +258,15 @@ func rodarPerfil(args []string) error {
 	if err != nil {
 		return err
 	}
+	// Sem a tela, ninguém disse sim às correções: nenhuma é aplicada.
+	p.DesmarcarCorrecoes()
 	if p.Bloqueado() {
-		return fmt.Errorf("bloqueado:\n  - %s", strings.Join(p.Bloqueios, "\n  - "))
+		return fmt.Errorf("bloqueado:\n  - %s", strings.Join(p.BloqueiosAtivos(), "\n  - "))
+	}
+	for _, c := range p.Correcoes {
+		if !c.Bloqueia {
+			fmt.Println("aviso (correção só pela tela):", c.SeNao)
+		}
 	}
 	if c := p.Confirmacao(); c != "" && *confirmar != c {
 		return fmt.Errorf("o destino é homolog: para substituir o banco %s sem a tela, passe --confirmar %s", c, c)
@@ -270,12 +301,17 @@ func rodarPerfil(args []string) error {
 		return err
 	}
 	fmt.Printf("execução #%d: %s — %s\n", id, e.Estado, e.Mensagem)
-	if len(p.Anteriores) > 0 {
-		var total int64
-		for _, a := range p.Anteriores {
-			total += a.Tamanho
-		}
-		fmt.Printf("lembrete: %d banco(s) __anterior de %s ocupam %s no destino; sem a tela, nada é apagado (aba 5)\n", len(p.Anteriores)+1, p.Perfil.DestinoBanco, motor.Tamanho(total))
+	// Os anteriores que ficaram: os de antes e o desta cópia, se ela trocou.
+	anteriores, total := len(p.Anteriores), int64(0)
+	for _, a := range p.Anteriores {
+		total += a.Tamanho
+	}
+	if e.BancoAnterior != "" {
+		anteriores++
+		total += p.Destino.Info.Tamanho
+	}
+	if anteriores > 0 {
+		fmt.Printf("lembrete: %d banco(s) __anterior de %s ocupam %s no destino; sem a tela, nada é apagado (aba 5)\n", anteriores, p.Perfil.DestinoBanco, motor.Tamanho(total))
 	}
 	switch e.Estado {
 	case cadastro.EstadoOK:

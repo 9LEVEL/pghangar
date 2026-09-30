@@ -243,6 +243,11 @@ func Conectar(ctx context.Context, c cadastro.Conexao, p *Ponte, senha, banco st
 		prazo = 10 * time.Second
 	}
 	cfg.ConnectTimeout = prazo
+	// Pelo túnel, o prazo do túnel (o TLS, o canal) começa depois do dele: o pgx espera mais, para
+	// o motivo que o túnel manda chegar antes do "não respondeu a tempo".
+	if p.Tunel != nil {
+		cfg.ConnectTimeout = 2*prazo + 5*time.Second
+	}
 	// Sem cache de comandos preparados: as consultas são poucas, e o catálogo muda entre elas
 	// (bancos criados e renomeados).
 	cfg.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
@@ -277,7 +282,7 @@ func explicarPG(c cadastro.Conexao, banco string, err error) error {
 			msg = "o servidor está iniciando, desligando ou em recuperação, e não aceita conexões agora"
 		case "53300":
 			msg = "o servidor está sem conexões livres (max_connections)"
-		case tunel.CodigoTLS:
+		case tunel.CodigoTLS, tunel.CodigoCanal:
 			msg = pe.Message
 		default:
 			msg = fmt.Sprintf("%s (%s)", pe.Message, pe.Code)

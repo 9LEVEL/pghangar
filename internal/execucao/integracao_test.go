@@ -322,14 +322,26 @@ func TestPontaAPontaComOBinario(t *testing.T) {
 	if n := contar(t, destino, "postgres", fmt.Sprintf(`SELECT count(*) FROM pg_roles WHERE rolname = '%s'`, role)); n != 1 {
 		t.Fatalf("a role temporária deveria ter sobrado depois do kill -9 (é o caso que a limpeza cobre): %d", n)
 	}
-	p = planejar()
-	if !p.NovoExiste || !p.Bloqueado() || !strings.Contains(strings.Join(p.Notas, " "), role) {
-		t.Fatalf("o plano deveria bloquear pelo __novo e informar da role: %v %v", p.Bloqueios, p.Notas)
-	}
 	// O container órfão do restore: a aba Ambiente mostra; aqui, paramos como ela faria.
 	out, _ := exec.Command("docker", "ps", "--format", "{{.Names}}", "--filter", "label="+imagens.Rotulo+"="+strconv.FormatInt(id3, 10), "--filter", "label="+imagens.RotuloInstancia+"="+instancia(t, cad)).Output()
 	for _, n := range strings.Fields(string(out)) {
 		must(dk.Parar(ctx, n))
+	}
+	for i := 0; i < 100 && contar(t, destino, "postgres", `SELECT count(*) FROM pg_stat_activity WHERE datname = 'loja__novo'`) > 0; i++ {
+		time.Sleep(100 * time.Millisecond) // as sessões do restore parado saem em instantes
+	}
+	// O __novo que sobrou (sem ninguém conectado, de uma cópia desta instalação que já terminou)
+	// vira uma correção marcada. Sem ela, como no cron, a cópia fica bloqueada.
+	p = planejar()
+	novoMarcado := false
+	for _, c := range p.Correcoes {
+		novoMarcado = novoMarcado || (c.Tipo == motor.CorrecaoNovo && c.Marcada)
+	}
+	semTela := p
+	semTela.Correcoes = append([]motor.Correcao(nil), p.Correcoes...)
+	semTela.DesmarcarCorrecoes()
+	if !p.NovoExiste || !novoMarcado || p.Bloqueado() || !semTela.Bloqueado() || !strings.Contains(strings.Join(p.Notas, " "), role) {
+		t.Fatalf("o __novo deveria virar correção marcada, e a role, nota: %+v %v %v", p.Correcoes, p.BloqueiosAtivos(), p.Notas)
 	}
 	must(motor.Apagar(ctx, d, "dev", "loja", "loja__novo"))
 	if n := contar(t, destino, "postgres", `SELECT count(*) FROM pg_roles WHERE rolname LIKE 'copia\_banco\_%'`); n != 0 {

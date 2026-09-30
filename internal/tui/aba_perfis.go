@@ -71,6 +71,12 @@ func (a *abaPerfis) tecla(m *Model, k tea.KeyMsg) tea.Cmd {
 					ns = append(ns, n)
 				}
 			}
+			// Um perfil só é uma cópia comum, com a confirmação dela (o nome do banco num homolog), e
+			// não a palavra do grupo.
+			if len(ns) == 1 {
+				a.marcados = nil
+				return m.copiar(ns[0])
+			}
 			return m.copiarGrupo(ns)
 		}
 		if p, ok := a.atual(m); ok {

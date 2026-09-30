@@ -149,6 +149,10 @@ func Diagnosticar(ctx context.Context, c cadastro.Conexao, a Ambiente, s Segredo
 				if ponte.Tunel != nil {
 					return d.falha("TLS", err)
 				}
+			case tunel.CodigoCanal:
+				if ponte.Tunel != nil {
+					return d.falha("Canal", err)
+				}
 			}
 		}
 		return d.falha("Postgres", err)

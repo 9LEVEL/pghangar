@@ -228,48 +228,58 @@ func Desfazer(ctx context.Context, d Deps, conexaoNome, bancoDestino, anterior s
 }
 
 // Apagar apaga um banco da ferramenta (um __anterior ou o __novo) de um destino. Recusa qualquer
-// outro nome, e um banco que algum perfil use. É o único DROP DATABASE da ferramenta fora da etapa
-// "Anteriores".
+// outro nome, e um banco que algum perfil use. Fora da etapa "Anteriores", é o único DROP DATABASE
+// da ferramenta, junto com a correção do __novo que sobrou (apagarBanco, nos dois).
 func Apagar(ctx context.Context, d Deps, conexaoNome, bancoDestino, nome string) error {
+	return comDestino(ctx, d, conexaoNome, bancoDestino, true, func(l *lado) error {
+		_, err := apagarBanco(ctx, d, l, conexaoNome, bancoDestino, nome)
+		return err
+	})
+}
+
+// apagarBanco apaga um banco da ferramenta pelo lado já aberto (e já travado por quem chama).
+// apagou diz se o DROP aconteceu, mesmo quando um passo depois dele falha.
+func apagarBanco(ctx context.Context, d Deps, l *lado, conexaoNome, bancoDestino, nome string) (apagou bool, err error) {
 	if !nomes.EhDaFerramenta(bancoDestino, nome) {
-		return fmt.Errorf("recusado: %s não é um banco da ferramenta para %s", nome, bancoDestino)
+		return false, fmt.Errorf("recusado: %s não é um banco da ferramenta para %s", nome, bancoDestino)
 	}
 	usados, err := bancosDePerfis(ctx, d, conexaoNome)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if usados[nome] {
-		return fmt.Errorf("recusado: %s é o banco de um perfil", nome)
+		return false, fmt.Errorf("recusado: %s é o banco de um perfil", nome)
 	}
-	err = comDestino(ctx, d, conexaoNome, bancoDestino, true, func(l *lado) error {
-		if ok, err := existeBanco(ctx, l.admin, nome); err != nil || !ok {
-			return fmt.Errorf("o banco %s não existe", nome)
-		}
-		if _, err := l.admin.Exec(ctx, "DROP DATABASE "+id(nome)+" WITH (FORCE)"); err != nil {
-			return err
-		}
-		// Apagado o __novo, a role temporária que era dona dele pode sair.
-		limparRolesOrfas(ctx, d, l.admin)
-		return nil
-	})
-	if err != nil || nome != nomes.Novo(bancoDestino) {
-		return err
+	adm, err := l.adminVivo(ctx, d)
+	if err != nil {
+		return false, err
+	}
+	if ok, err := existeBanco(ctx, adm, nome); err != nil || !ok {
+		return false, fmt.Errorf("o banco %s não existe", nome)
+	}
+	if _, err := adm.Exec(ctx, "DROP DATABASE "+id(nome)+" WITH (FORCE)"); err != nil {
+		return false, err
+	}
+	// Apagado o __novo, a role temporária que era dona dele pode sair.
+	limparRolesOrfas(ctx, d, adm)
+	if nome != nomes.Novo(bancoDestino) {
+		return true, nil
 	}
 	// Uma execução que aguardava a troca deste __novo não tem mais o que trocar.
 	es, err := d.Cadastro.Execucoes(ctx, 1000)
 	if err != nil {
-		return err
+		return true, err
 	}
 	for _, e := range es {
 		if e.Estado == cadastro.EstadoAguardando && e.Destino == conexaoNome && e.Banco == bancoDestino && e.BancoNovo == nome {
 			e.Estado, e.Fim = cadastro.EstadoErro, time.Now()
-			e.Mensagem = fmt.Sprintf("não trocada: o banco %s foi apagado na aba Anteriores (%s)", nome, e.Mensagem)
+			e.Mensagem = fmt.Sprintf("não trocada: o banco %s foi apagado (%s)", nome, e.Mensagem)
 			if err := d.Cadastro.GravarExecucao(ctx, e); err != nil {
-				return err
+				return true, err
 			}
 		}
 	}
-	return nil
+	return true, nil
 }
 
 // rolesOrfas lista as roles temporárias desta instância que sobraram no servidor: as de execuções

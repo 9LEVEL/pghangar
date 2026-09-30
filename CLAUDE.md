@@ -14,7 +14,7 @@ ao usuário.
 | regra | o que significa na prática |
 |---|---|
 | **Só se altera este diretório** | `/docker/copy-db-prod`, `/docker/pgtui` e os demais servem só de referência. Pode ler e copiar ideias; nunca editar, formatar ou gerar arquivos lá |
-| **Nada é apagado sem pergunta** | Nenhum dump, banco `__anterior` ou `__novo` sai sem o sysadmin mandar. A exceção é o `pgpass` temporário de cada execução |
+| **Nada é apagado sem pergunta** | Nenhum dump, banco `__anterior` ou `__novo` sai sem o sysadmin mandar. As exceções são o `pgpass` e a role temporária de cada execução; o `__novo` que sobrou só sai pela correção da cópia, com o SIM do sysadmin |
 | **Um banco `prod` nunca é destino** | A regra fica no motor, com teste, e nenhuma opção a desliga |
 | **A origem só é lida** | Nada escreve na origem. Toda sessão com ela passa por `abrirOrigem` (`internal/motor`) e começa com `default_transaction_read_only` |
 | **Descer de versão é bloqueado** | Uma imagem só, a da maior versão entre a origem e o destino, faz o dump e o restore |

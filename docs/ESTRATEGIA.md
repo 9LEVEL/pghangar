@@ -62,7 +62,7 @@ exemplo), a TUI avisa, atualiza o cadastro e escolhe a imagem pela versão de ag
 | Pronto | versão, tamanho, latência, se é réplica, se a imagem da versão está baixada |
 
 **Como o diagnóstico roda:**
-- em segundo plano, com prazo curto (5 s) e em paralelo;
+- em segundo plano, com prazo por camada (10 s) e em paralelo;
 - **sem travar a tela**;
 - cada conexão mostra o estado com uma cor e a idade da última verificação.
 
@@ -75,12 +75,18 @@ o túnel é obrigatório e faz parte da fase 1.
   homologação: no próprio servidor ou em hosts da rede interna.
 - **Túnel SSH:**
   - aberto pelo próprio binário (`golang.org/x/crypto/ssh`), sem depender do `ssh` do sistema;
-  - escuta num **socket unix**, num diretório `700` só do root (`tmp/tunel-*`), e não numa porta
+  - escuta num **socket unix**, num diretório `700` só do root (`tmp/tunel-*`; com um `--dir`
+    muito longo, `/tmp/tunel-*`, porque o caminho de um socket cabe em 108 bytes), e não numa porta
     de `127.0.0.1`, que qualquer usuário do servidor de desenvolvimento alcançaria. O container
     monta esse diretório;
   - **o TLS com o banco é do túnel.** No socket, o libpq ignora o `sslmode`, e o SSH só cifra até
-    o servidor SSH. Quando o `sslmode` pede, o túnel negocia o TLS com o banco pelo canal SSH, e
-    confere o certificado no `verify-ca` e no `verify-full`. O cliente fala em claro com o socket;
+    o servidor SSH. Quando o `sslmode` pede, o túnel negocia o TLS com o banco pelo canal SSH. O
+    cliente fala em claro com o socket. O `verify-full` confere o certificado pelas CAs do sistema
+    e contra o host do banco como cadastrado (o nome do certificado, e não `127.0.0.1`). O
+    `verify-ca` não vale pelo túnel: sem a CA do servidor, conferir a cadeia sem o nome aceitaria
+    qualquer certificado público. No `prefer`, como o libpq, uma recusa logo depois do TLS (um
+    `pg_hba` só com `hostnossl`) faz o túnel tentar de novo em claro. O que o túnel não consegue (o
+    TLS, o canal até o banco) chega ao cliente como um erro do protocolo, com o motivo;
   - **o destino do túnel é o banco visto a partir do servidor SSH:** `127.0.0.1:5432` quando o
     banco está no mesmo host, ou `db-interno:5432` quando o SSH entra num host e o banco fica em
     outro atrás dele;
@@ -98,7 +104,8 @@ o túnel é obrigatório e faz parte da fase 1.
 - **O túnel é necessário só durante o dump.** Ele fecha assim que o dump termina, e o restore
   roda no destino.
 - **Se o túnel cair no meio do dump,** o dump falha, fica marcado `incompleto`, e **o destino não
-  foi tocado**, porque o `__novo` só é criado depois do dump.
+  foi tocado**, porque o `__novo` só é criado depois do dump (fora a correção que apaga um `__novo`
+  que sobrou, se o sysadmin a deixou marcada, §10).
 - **O diagnóstico (§3) abre um túnel próprio e curto**, só para a verificação.
 
 ### Política de chaves SSH
@@ -192,7 +199,7 @@ Um perfil é **uma cópia de um banco**. Vários bancos são vários perfis.
 - jobs paralelos (padrão 2 na origem);
 - **tabelas sem dados:** padrões de nome cujas tabelas vêm só com a estrutura, sem as linhas
   (logs, auditoria), via `--exclude-table-data`;
-- **script SQL pós-restore**, opcional (§7, etapa 7);
+- **script SQL pós-restore**, opcional (§7, etapa 8);
 - o diretório dos dumps (padrão em §13).
 
 **No formulário, os bancos se escolhem num seletor de etiquetas,** com a lista da última
@@ -211,8 +218,11 @@ verificação da conexão, sem digitar o nome:
 
 ## 7. O motor: as etapas de uma cópia
 
-As etapas, na ordem em que a tela as mostra (`internal/motor`). As que não se aplicam a uma
-cópia aparecem puladas: sem anteriores marcados, sem script, destino que ainda não existe.
+As etapas, na ordem em que acontecem. A tela mostra as do motor (`motor.Etapas`: Checagens,
+Anteriores, Dump, Criar `__novo`, Restore, Conferência, Script pós-restore, Donos, Configurações
+do banco, ANALYZE, Base e Troca); a confirmação e a decisão acontecem na tela, entre elas. As que
+não se aplicam a uma cópia aparecem puladas: sem anteriores marcados, sem script, destino que ainda
+não existe, sem "guardar base".
 
 1. **Checagens.** Nada é escrito até todas passarem. O processo da cópia refaz o plano e confere
    que o destino e a origem confirmados são os mesmos de agora (pelo `system_identifier`):
@@ -226,10 +236,11 @@ cópia aparecem puladas: sem anteriores marcados, sem script, destino que ainda 
    - diferenças de locale e de collation entre origem e destino geram aviso;
    - há espaço no diretório dos dumps, comparado com o tamanho do banco de origem;
    - a lista de bancos `__anterior` do destino, com tamanho (§8);
-   - um `__novo` que sobrou de uma execução anterior bloqueia;
+   - um `__novo` que sobrou de uma cópia anterior vira a correção que o apaga, quando é seguro
+     (§10); senão, bloqueia;
    - as sessões ativas no destino, que vão ser derrubadas na troca;
    - a origem com event triggers, ou sem superusuário com tabelas com RLS, gera aviso ou bloqueio;
-   - uma role temporária que sobrou de uma execução morta gera aviso (a cópia a remove).
+   - uma role temporária que sobrou de uma execução morta vira uma informação (a cópia a remove).
 2. **Confirmação** (§10).
 3. **Anteriores:** apaga os `__anterior` que o sysadmin marcou na confirmação, e só eles.
 4. **Dump:**
@@ -249,7 +260,7 @@ cópia aparecem puladas: sem anteriores marcados, sem script, destino que ainda 
    - Tudo nasce com a role temporária, que é superusuário: extensões, event triggers e o resto
      restauram sem depender do dono do destino.
    - As roles da produção não vão para o destino. Assinaturas e publicações também não.
-   - **Um restore com erro não troca nada sem perguntar** (etapa 11).
+   - **Um restore com erro não troca nada sem perguntar** (etapa 12).
 7. **Conferência,** logo depois do restore (o script da etapa seguinte pode criar objetos de
    propósito): o número de objetos por tipo, sem os que pertencem a extensões, entre a origem e o
    `__novo`. As restrições NOT NULL ficam de fora: a partir do 18 elas também aparecem em
@@ -339,7 +350,31 @@ que ficou rodando aparece como **órfão** na aba Ambiente.
 - a imagem e o diretório do dump;
 - os `__anterior` do destino, com a pergunta do §8;
 - as sessões que vão ser derrubadas;
-- o script pós-restore.
+- o script pós-restore;
+- **as correções,** abaixo.
+
+**As correções: o que a cópia resolve sozinha no destino, se o sysadmin deixar marcado.** Elas
+aparecem na confirmação, e o mesmo `y` (ou o nome do banco) que confirma a cópia as aplica. O espaço
+marca ou desmarca cada uma, e uma correção desmarcada diz o que acontece sem ela.
+
+| correção | padrão | quando |
+|---|---|---|
+| apagar o `__novo` que sobrou de uma cópia anterior | marcada; desmarcada, bloqueia a cópia. Só é oferecida quando é seguro: o `__novo` tem a marca desta instalação (o comentário que ele recebe ao nascer), a cópia dele já terminou e não espera a troca, e ninguém está conectado nele. Senão, bloqueia, como antes | antes de tudo |
+| criar no destino as roles que a RLS e os user mappings da origem citam, **sem login e sem senha** | marcada | antes do restore |
+| tirar do banco copiado os **user mappings** (as credenciais) dos servidores externos (`postgres_fdw` e afins) | **sempre desmarcada** | depois do restore, antes da troca |
+
+- Só no destino e depois das guardas: nunca num servidor `prod`, nunca na origem. As roles criadas
+  valem para o servidor inteiro e ficam depois da cópia. Instalar pacote ou reiniciar serviço fica
+  de fora: vira um aviso com a orientação.
+- Na execução, uma correção só vale como foi confirmada: os mesmos nomes e, no `__novo`, o mesmo
+  banco (o OID). Uma marcada que mudou entre a confirmação e a execução para a cópia, que pede
+  outra confirmação. Na hora de apagar o `__novo`, a execução confere de novo o OID e as sessões.
+- Sem a tela (`pghangar rodar`, o cron), ninguém disse sim: nenhuma é aplicada.
+- Cada correção aplicada vai para o log e para as INFORMAÇÕES da execução ("corrigido: …").
+- No grupo, as correções seguem o padrão do plano, menos a do `__novo`: num grupo nada é apagado,
+  e o `__novo` que sobrou bloqueia o perfil. A confirmação do grupo lista as correções.
+- A restauração de um dump guardado oferece as mesmas, com a lista dos servidores externos
+  guardada no manifesto do dump.
 
 ## 11. A execução separada da tela
 
@@ -359,7 +394,10 @@ que ficou rodando aparece como **órfão** na aba Ambiente.
 
 **Sem a tela, para scripts e cron:** `pghangar rodar <perfil>`.
 - Num destino `homolog`, é obrigatório `--confirmar <banco>`.
-- **Nunca apaga nada:** um `__novo` que sobrou impede a execução, e isso é informado.
+- **Nunca apaga nada:** um `__novo` que sobrou impede a execução, e isso é informado. Nenhuma
+  correção é aplicada sem a tela.
+- Ao começar, marca como interrompidas as execuções cujo processo morreu, como a tela faz: quem só
+  usa o cron também tem o que sobrou limpo.
 
 ## 12. Cuidados com a produção
 
@@ -370,9 +408,10 @@ que ficou rodando aparece como **órfão** na aba Ambiente.
   `options` da conexão): a conexão administrativa, o `pg_dump`, a contagem de linhas e a leitura em
   blocos. O diagnóstico também, em qualquer conexão. É uma rede contra um bug, e não contra quem
   mexer no código, porque uma sessão pode desligar o padrão. A garantia do lado do servidor é um
-  usuário sem escrita na origem.
+  usuário sem escrita na origem. O plano confere que a sessão ficou mesmo só de leitura e avisa se não ficou (um
+  pooler na frente pode ignorar o `options`).
 - **Com uma réplica disponível, puxar dela** tira a carga do primário. Um dump longo numa réplica
-  pode ser cancelado por conflito de recuperação. A TUI reconhece esse erro e explica a causa.
+  pode ser cancelado por conflito de recuperação. O plano avisa disso antes da cópia.
 
 ## 13. Onde ficam as coisas
 
@@ -443,7 +482,7 @@ rodapé diz como ela terminou ("✔ #3 loja concluída em 3m12s").
 
 | fase | entrega |
 |---|---|
-| | **As fases 1, 2 e 3 estão prontas** (2026-09-29), testadas só em localhost. Ficaram de fora da 3: o modo rápido com pgcopydb (exige outra imagem, e o link instável já cobre o problema principal) e a anonimização (não é necessária). |
+| | **As fases 1, 2 e 3 estão prontas** (2026-09-29), testadas em localhost e, desde 2026-09-30, em uso contra um servidor real. Ficaram de fora da 3: o modo rápido com pgcopydb (exige outra imagem, e o link instável já cobre o problema principal) e a anonimização (não é necessária). |
 | **1** | conexões com diagnóstico e leitura da versão; **túnel SSH com chaves, `known_hosts` e instruções para o host da produção**; imagens (baixar e travar); perfis com tabelas sem dados e script pós-restore; o motor completo; confirmações; `__anterior` com pergunta e desfazer; aba Dumps; execução separada; histórico |
 | **1+** | as melhorias depois da pesquisa de mercado (`docs/MERCADO.md`): compressão zstd/lz4; filtro de schemas e tabelas (com `--extension=*`); **servidores de destino aprovados** (tecla `v`); checagens de disco local e de roles citadas pela RLS; quem rodou (o login por trás do sudo); os bancos por sugestão no formulário (`ctrl+n`; depois, o seletor com filtro do §6); o dump refeito sozinho quando o túnel cai |
 | **2** | atualizar imagens (`u`, com confirmação; as antigas ficam); restaurar um dump guardado (aba 4, `r`, sem ir à origem); `pghangar rodar` para o cron; **contagem exata de linhas no mesmo snapshot do dump** (`pg_export_snapshot` + `pg_dump --snapshot`) |
@@ -464,15 +503,20 @@ timer do systemd.
 Na aba 1, o espaço marca perfis; enter planeja todos e mostra o plano do grupo. As cópias rodam **em
 fila, uma de cada vez**, num único processo separado (para não carregar a origem com vários dumps ao
 mesmo tempo). Uma que falha não para as outras. Cancelar para a atual e as que esperam. Num grupo,
-nada é apagado (a pergunta dos anteriores fica para cada cópia sozinha), e dois perfis no mesmo
-banco de destino são recusados. Com um destino homolog no grupo, a confirmação é `copiar` digitado.
+nada é apagado (a pergunta dos anteriores fica para cada cópia sozinha, e a correção do `__novo`
+que sobrou fica desmarcada), e dois perfis no mesmo banco de destino são recusados. Com um destino
+homolog no grupo, a confirmação é `copiar` digitado. Um perfil marcado sozinho é uma cópia comum,
+com a confirmação dela.
 
 ### Banco base e reset
 
 Um perfil com "guardar base" deixa, a cada cópia, `<banco>__base` no destino: criado do `__novo`
 antes da troca (`CREATE DATABASE … TEMPLATE … STRATEGY FILE_COPY`), fechado para conexões, com o
 comentário de que cópia veio. A base anterior é substituída, e o plano diz isso antes da
-confirmação. A tecla `z` recria o destino a partir da base, **sem ir à origem nem ao Docker**: o
+confirmação. Ela só é apagada depois de a nova existir: enquanto isso, fica como
+`<banco>__base_velha`, e se a nova falha (o disco cheio), a anterior volta e a troca espera a
+decisão do sysadmin, com o `__novo` pronto. Um `__base` que é o banco de um perfil nunca é
+substituído. A tecla `z` recria o destino a partir da base, **sem ir à origem nem ao Docker**: o
 `__novo` vem da base, ganha as configurações do destino de agora e troca de nome como numa cópia (com
 desfazer). No PostgreSQL 18, com `file_copy_method = clone` num sistema de arquivos com reflink, isso
 leva milissegundos.

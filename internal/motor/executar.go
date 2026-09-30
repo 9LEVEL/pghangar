@@ -57,6 +57,7 @@ type Manifesto struct {
 	Filtros   Filtros          `json:"filtros,omitempty"`
 	Extensoes []Extensao       `json:"extensoes,omitempty"`
 	Citadas   []string         `json:"citadas,omitempty"`
+	Externos  []string         `json:"externos,omitempty"` // os servidores externos com user mappings
 }
 
 // LerManifesto lê o manifesto de um dump guardado.
@@ -99,6 +100,7 @@ type corrida struct {
 	// formato é o do dump: pg_dump (diretório) ou blocos (link instável).
 	formato  string
 	trocou   bool // o __novo já é o banco de destino
+	fdwFeito bool // a correção dos user mappings já rodou no __novo
 	passados bool // os objetos da role temporária já foram para o dono
 	mu       sync.Mutex
 	ultimo   time.Time
@@ -137,6 +139,9 @@ func (r *corrida) fim(ctx context.Context, err error) {
 	ficou := ""
 	if r.e.BancoNovo != "" && !r.trocou {
 		ficou = fmt.Sprintf("o banco %s ficou no destino (apague-o na aba Anteriores)", r.e.BancoNovo)
+		if c, ok := r.p.correcao(CorrecaoFDW); ok && c.Marcada && !r.fdwFeito {
+			ficou += ", e ele ainda guarda os user mappings dos servidores externos, que a correção tiraria"
+		}
 	}
 	switch {
 	case err == nil:
@@ -221,8 +226,12 @@ func (r *corrida) copiar(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("checagens: %w", err)
 	}
+	// As correções valem como o sysadmin as marcou na confirmação, e só as mesmas.
+	if err := p.AdotarEscolhas(confirmado); err != nil {
+		return err
+	}
 	if p.Bloqueado() {
-		return fmt.Errorf("bloqueado: %s", strings.Join(p.Bloqueios, "; "))
+		return fmt.Errorf("bloqueado: %s", strings.Join(p.BloqueiosAtivos(), "; "))
 	}
 	// O que o sysadmin confirmou é o que vai rodar: mesmo destino, mesmo servidor, mesma origem.
 	if p.Destino.Conexao != r.e.Destino || p.Destino.Banco != r.e.Banco {
@@ -260,6 +269,14 @@ func (r *corrida) copiar(ctx context.Context) error {
 		return fmt.Errorf("abrindo o destino: %w", err)
 	}
 	defer r.destino.fechar()
+	// O destino aberto para o trabalho é o mesmo servidor do plano (um DNS ou um VIP que mudou no
+	// meio não leva a cópia a outro cluster).
+	if sid := r.destino.c.Info.SystemID; p.Destino.SystemID != "" && sid != p.Destino.SystemID {
+		return fmt.Errorf("o destino aberto é outro servidor (system_identifier %s, e não %s): confirme de novo", sid, p.Destino.SystemID)
+	}
+	if err := r.corrigirNovo(ctx); err != nil {
+		return err
+	}
 	limparRolesOrfas(ctx, d, r.destino.admin)
 	if resetar {
 		return r.resetar(ctx)
@@ -301,6 +318,9 @@ func (r *corrida) copiar(ctx context.Context) error {
 	}
 
 	r.etapa("Criar __novo")
+	if err := r.corrigirRoles(ctx); err != nil {
+		return err
+	}
 	if err := r.criarNovo(ctx); err != nil {
 		return err
 	}
@@ -309,6 +329,9 @@ func (r *corrida) copiar(ctx context.Context) error {
 	r.etapa("Restore")
 	erros, err := r.restore(ctx)
 	if err != nil {
+		return err
+	}
+	if err := r.corrigirFDW(ctx); err != nil {
 		return err
 	}
 
@@ -511,7 +534,7 @@ func (r *corrida) dump(ctx context.Context) error {
 	r.gravar()
 	m := Manifesto{Perfil: p.Perfil.Nome, Execucao: r.e.ID, Estado: DumpIncompleto, Inicio: time.Now(), Origem: p.Origem,
 		Imagem: p.Imagem, ImagemRef: p.ImagemRef, Cliente: p.Cliente, SemDados: p.Perfil.SemDados, Contagem: p.Contagem,
-		Filtrado: p.Perfil.Filtrado(), Formato: FormatoPgDump, Extensoes: p.Extensoes, Citadas: p.Citadas,
+		Filtrado: p.Perfil.Filtrado(), Formato: FormatoPgDump, Extensoes: p.Extensoes, Citadas: p.Citadas, Externos: p.Externos,
 		Filtros: Filtros{Schemas: p.Perfil.Schemas, SchemasFora: p.Perfil.SchemasFora, Tabelas: p.Perfil.Tabelas, TabelasFora: p.Perfil.TabelasFora}}
 	if err := EscreverManifesto(r.trabalho, m); err != nil {
 		return err
@@ -561,6 +584,16 @@ type falhaRede struct{ err error }
 func (f *falhaRede) Error() string { return f.err.Error() }
 func (f *falhaRede) Unwrap() error { return f.err }
 
+// errOrigemOutra: a origem reaberta depois de uma queda é outro servidor. A cópia para: continuar
+// misturaria dois clusters no mesmo dump.
+var errOrigemOutra = errors.New("a origem reaberta é outro servidor (system_identifier diferente)")
+
+// marcasFixas são erros que não passam tentando de novo: senha, pg_hba, TLS recusado.
+var marcasFixas = []string{
+	"password authentication failed", "no pg_hba.conf entry", "o túnel não conseguiu TLS", "does not exist",
+	"permission denied", "SSL is not enabled on the server", "server does not support SSL",
+}
+
 var marcasDeRede = []string{
 	"server closed the connection unexpectedly", "could not connect to server", "connection to server",
 	"no connection to the server", "SSL SYSCALL error", "Connection refused", "Connection reset",
@@ -569,6 +602,13 @@ var marcasDeRede = []string{
 }
 
 func ehFalhaDeRede(ultimas []string) bool {
+	for _, l := range ultimas {
+		for _, m := range marcasFixas {
+			if strings.Contains(l, m) {
+				return false
+			}
+		}
+	}
 	for _, l := range ultimas {
 		for _, m := range marcasDeRede {
 			if strings.Contains(l, m) {
@@ -590,7 +630,7 @@ func (r *corrida) reabrirOrigem(ctx context.Context) error {
 		return err
 	}
 	if r.origem.c.Info.SystemID != r.p.Origem.SystemID && r.p.Origem.SystemID != "" {
-		return errors.New("a origem reaberta é outro servidor (system_identifier diferente)")
+		return errOrigemOutra
 	}
 	_ = os.Remove(r.pgpass)
 	return r.escreverPgpass()
@@ -732,6 +772,11 @@ func (r *corrida) criarNovo(ctx context.Context) error {
 	inst, err := r.d.Cadastro.Instancia(ctx)
 	if err != nil {
 		return err
+	}
+	// A marca diz de que instalação e de que execução o __novo é: a correção que apaga um __novo
+	// que sobrou só vale para os desta instalação, de uma cópia que já terminou.
+	if _, err := adm.Exec(ctx, "COMMENT ON DATABASE "+id(p.Novo)+" IS "+lit(marcaDoNovo(inst, r.e.ID))); err != nil {
+		return fmt.Errorf("marcando %s: %w", p.Novo, err)
 	}
 	r.role = nomes.RoleTemporaria(inst, r.e.ID)
 	if _, err := adm.Exec(ctx, "CREATE ROLE "+id(r.role)+" SUPERUSER NOLOGIN"); err != nil {
@@ -1206,6 +1251,17 @@ func trocarNomes(ctx context.Context, d Deps, l *lado, banco, novo string, esper
 	if novoOID != 0 && o != novoOID {
 		return "", false, fmt.Errorf("%w: o banco %s foi apagado e recriado por outra cópia, e nada foi trocado", errNovoPerdido, novo)
 	}
+	// A marca da ferramenta no __novo não vai para o banco de destino. Se as configurações do banco
+	// deram a ele o comentário do destino, ela já saiu.
+	var comentario string
+	if err := adm.QueryRow(ctx, `SELECT coalesce(shobj_description(oid, 'pg_database'), '') FROM pg_database WHERE datname = $1`, novo).Scan(&comentario); err != nil {
+		return "", false, err
+	}
+	if _, _, marcado := lerMarcaDoNovo(comentario); marcado {
+		if _, err := adm.Exec(ctx, "COMMENT ON DATABASE "+id(novo)+" IS NULL"); err != nil {
+			return "", false, err
+		}
+	}
 	existe, err := existeBanco(ctx, adm, banco)
 	if err != nil {
 		return "", false, err
@@ -1328,23 +1384,57 @@ func (r *corrida) guardarBase(ctx context.Context) error {
 	}
 	b := r.p.Destino.Banco
 	base, novo := nomes.BancoBase(b), r.e.BancoNovo
+	usados, err := bancosDePerfis(ctx, r.d, r.p.Perfil.Destino)
+	if err != nil {
+		return err
+	}
+	if usados[base] {
+		return fmt.Errorf("o banco %s é o banco de um perfil: a base não o substitui", base)
+	}
+	// A base antiga sai do caminho com outro nome e só é apagada depois de a nova existir: se a
+	// nova falhar (o disco cheio), a antiga volta, e a troca espera a decisão do sysadmin.
+	velha := ""
 	if ok, err := existeBanco(ctx, adm, base); err != nil {
 		return err
 	} else if ok {
+		velha = nomes.BaseVelha(b)
+		if ok, err := existeBanco(ctx, adm, velha); err != nil {
+			return err
+		} else if ok {
+			// Uma sobra de uma substituição que morreu no meio.
+			if _, err := adm.Exec(ctx, "DROP DATABASE "+id(velha)+" WITH (FORCE)"); err != nil {
+				return fmt.Errorf("apagando %s: %w", velha, err)
+			}
+		}
 		r.d.logf("substituindo a base anterior %s (confirmado no plano)", base)
 		if err := conexoesDoBanco(ctx, adm, base, false); err != nil {
 			return err
 		}
-		if _, err := adm.Exec(ctx, "DROP DATABASE "+id(base)+" WITH (FORCE)"); err != nil {
-			return fmt.Errorf("apagando a base anterior: %w", err)
+		if err := derrubar(ctx, adm, base); err != nil {
+			return err
 		}
+		if err := renomear(ctx, adm, base, velha); err != nil {
+			return fmt.Errorf("guardando a base anterior: %w", err)
+		}
+	}
+	falhou := func(err error) error {
+		msg := fmt.Sprintf("a base não foi guardada (%v)", err)
+		if velha != "" {
+			if e := renomear(ctx, adm, velha, base); e != nil {
+				msg += fmt.Sprintf("; a base anterior ficou como %s (%v)", velha, e)
+			} else {
+				msg += "; a base anterior foi mantida"
+			}
+		}
+		_ = conexoesDoBanco(ctx, adm, novo, true)
+		return &aguardar{motivo: msg + fmt.Sprintf(": a troca espera a sua decisão. O banco %s está pronto no destino.", novo)}
 	}
 	// O modelo não pode ter ninguém conectado (nem o autovacuum).
 	if err := conexoesDoBanco(ctx, adm, novo, false); err != nil {
-		return err
+		return falhou(err)
 	}
 	if err := derrubar(ctx, adm, novo); err != nil {
-		return err
+		return falhou(err)
 	}
 	cmds := []string{
 		"CREATE DATABASE " + id(base) + " TEMPLATE " + id(novo) + estrategiaCopia(r.p.Destino.VersaoNum) + " OWNER " + id(r.destino.c.Usuario),
@@ -1353,10 +1443,18 @@ func (r *corrida) guardarBase(ctx context.Context) error {
 		"COMMENT ON DATABASE " + id(base) + " IS " + lit(fmt.Sprintf("pghangar: base de %s, da cópia #%d de %s/%s em %s",
 			b, r.e.ID, r.p.Origem.Conexao, r.p.Origem.Banco, time.Now().Format("2006-01-02 15:04"))),
 	}
-	for _, c := range cmds {
+	for i, c := range cmds {
 		r.d.logf("%s", c)
 		if _, err := adm.Exec(ctx, c); err != nil {
+			if i == 0 {
+				return falhou(err)
+			}
 			return fmt.Errorf("%s: %w", c, err)
+		}
+	}
+	if velha != "" {
+		if _, err := adm.Exec(ctx, "DROP DATABASE "+id(velha)+" WITH (FORCE)"); err != nil {
+			r.d.logf("a base anterior ficou como %s: %v (apague-a na aba Anteriores)", velha, err)
 		}
 	}
 	return nil

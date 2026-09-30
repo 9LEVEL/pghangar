@@ -18,27 +18,63 @@ import (
 	"github.com/9LEVEL/pghangar/internal/versoes"
 )
 
-// telaPlano é a confirmação da cópia: tudo o que vai acontecer, os bloqueios, os avisos, os
-// anteriores (com a pergunta de quais apagar) e a confirmação, que num destino homolog é o nome do
-// banco digitado.
+// telaPlano é a confirmação da cópia: tudo o que vai acontecer, os bloqueios, os avisos, as
+// correções (marcadas ou não), os anteriores (com a pergunta de quais apagar) e a confirmação, que
+// num destino homolog é o nome do banco digitado.
 type telaPlano struct {
 	p        motor.Plano
 	marcados map[string]bool
-	cursor   int
-	focoAnt  bool // o foco está na lista dos anteriores (e não no campo da confirmação)
+	cursor   int // nos anteriores
+	curCor   int // nas correções
+	foco     int
 	entrada  textinput.Model
 	vp       viewport.Model
 	erro     string
 }
 
+// Onde está o foco da confirmação: em nada (um dev sem listas: o y confirma), no campo do nome
+// (homolog), nas correções ou nos anteriores.
+const (
+	focoNenhum = iota
+	focoNome
+	focoCorrecoes
+	focoAnteriores
+)
+
+// focos são os lugares por onde o tab passa, na ordem da tela.
+func (t *telaPlano) focos() []int {
+	var fs []int
+	if len(t.p.Correcoes) > 0 {
+		fs = append(fs, focoCorrecoes)
+	}
+	if len(t.p.Anteriores) > 0 {
+		fs = append(fs, focoAnteriores)
+	}
+	if t.p.Confirmacao() != "" {
+		fs = append(fs, focoNome)
+	}
+	return fs
+}
+
 func (m *Model) abrirPlano(p motor.Plano) tea.Cmd {
+	// Um plano que chega com outra janela aberta não a substitui: uma tecla dada para ela
+	// confirmaria o plano errado.
+	if m.janelaAberta() {
+		m.status = "o plano de " + p.Perfil.Nome + " ficou pronto com outra janela aberta: feche-a e tecle enter de novo"
+		return nil
+	}
 	t := &telaPlano{p: p, marcados: map[string]bool{}}
 	t.entrada = textinput.New()
 	t.entrada.Prompt = "› "
 	t.entrada.CharLimit = 128
 	t.entrada.Width = 40
-	// Sem campo (dev) ou sem nada para digitar, o foco começa nos anteriores.
-	t.focoAnt = p.Confirmacao() == "" && len(p.Anteriores) > 0
+	// Num homolog, o foco começa no nome; num dev, nas correções ou nos anteriores (ou em nada).
+	switch fs := t.focos(); {
+	case p.Confirmacao() != "":
+		t.foco = focoNome
+	case len(fs) > 0:
+		t.foco = fs[0]
+	}
 	m.plano = t
 	t.redimensionar(m)
 	if p.Confirmacao() != "" && !p.Bloqueado() {
@@ -74,36 +110,55 @@ func (t *telaPlano) tecla(m *Model, k tea.KeyMsg) tea.Cmd {
 		t.vp, _ = t.vp.Update(k)
 		return nil
 	case "tab", "shift+tab":
-		if len(p.Anteriores) > 0 && p.Confirmacao() != "" {
-			t.focoAnt = !t.focoAnt
-			if t.focoAnt {
-				t.entrada.Blur()
-				return nil
-			}
-			return t.entrada.Focus()
-		}
-		return nil
-	case "up", "down":
-		if len(p.Anteriores) > 0 {
-			if k.String() == "up" {
-				t.cursor = max(t.cursor-1, 0)
-			} else {
-				t.cursor = min(t.cursor+1, len(p.Anteriores)-1)
-			}
-			t.vp.SetContent(t.corpo(m))
+		fs := t.focos()
+		if len(fs) < 2 {
 			return nil
 		}
-		t.vp, _ = t.vp.Update(k)
+		i := 0
+		for k, f := range fs {
+			if f == t.foco {
+				i = k
+			}
+		}
+		d := 1
+		if k.String() == "shift+tab" {
+			d = len(fs) - 1
+		}
+		t.foco = fs[(i+d)%len(fs)]
+		if t.foco == focoNome {
+			return t.entrada.Focus()
+		}
+		t.entrada.Blur()
+		return nil
+	case "up", "down":
+		passo := 1
+		if k.String() == "up" {
+			passo = -1
+		}
+		switch t.foco {
+		case focoCorrecoes:
+			t.curCor = limitar(t.curCor+passo, 0, len(p.Correcoes)-1)
+		case focoAnteriores:
+			t.cursor = limitar(t.cursor+passo, 0, len(p.Anteriores)-1)
+		default:
+			t.vp, _ = t.vp.Update(k)
+		}
 		return nil
 	case " ":
-		if len(p.Anteriores) > 0 && (t.focoAnt || p.Confirmacao() == "") {
+		switch t.foco {
+		case focoCorrecoes:
+			t.p.Correcoes[t.curCor].Marcada = !t.p.Correcoes[t.curCor].Marcada
+			t.erro = ""
+			t.vp.SetContent(t.corpo(m))
+			return nil
+		case focoAnteriores:
 			n := p.Anteriores[t.cursor].Nome
 			t.marcados[n] = !t.marcados[n]
 			t.vp.SetContent(t.corpo(m))
 			return nil
 		}
 	case "enter", "y":
-		if k.String() == "y" && p.Confirmacao() != "" && !t.focoAnt {
+		if k.String() == "y" && t.foco == focoNome {
 			break // no campo, o y é uma letra
 		}
 		// Num destino dev, só o y confirma: o plano aparece sozinho quando fica pronto, e um enter
@@ -120,15 +175,15 @@ func (t *telaPlano) tecla(m *Model, k tea.KeyMsg) tea.Cmd {
 		}
 		if c := p.Confirmacao(); c != "" && t.entrada.Value() != c {
 			t.erro = "para confirmar, digite exatamente " + c
-			if t.focoAnt {
-				t.focoAnt = false
+			if t.foco != focoNome {
+				t.foco = focoNome
 				return t.entrada.Focus()
 			}
 			return nil
 		}
 		return t.confirmar(m)
 	}
-	if p.Confirmacao() != "" && !t.focoAnt && !p.Bloqueado() {
+	if t.foco == focoNome && p.Confirmacao() != "" && !p.Bloqueado() {
 		t.erro = ""
 		var cmd tea.Cmd
 		t.entrada, cmd = t.entrada.Update(k)
@@ -252,9 +307,9 @@ func (t *telaPlano) corpo(m *Model) string {
 		secao("SESSÕES", stAvisoV.Render(fmt.Sprintf("%d conexão(ões) no destino serão derrubadas na troca: ", len(p.Sessoes)))+stDica.Render(strings.Join(ss, ", ")))
 	}
 
-	if len(p.Bloqueios) > 0 {
+	if bs := p.BloqueiosAtivos(); len(bs) > 0 {
 		b.WriteString("\n" + stPerigoV.Render("BLOQUEADO") + "\n")
-		for _, x := range p.Bloqueios {
+		for _, x := range bs {
 			b.WriteString(quebrar(stPerigoV.Render("  ✖ "), stTexto.Render(x), w) + "\n")
 		}
 	}
@@ -274,6 +329,37 @@ func (t *telaPlano) corpo(m *Model) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
+// correcoes é a lista das correções, fora da rolagem, como a dos anteriores: é uma pergunta que a
+// confirmação responde. Desmarcada, cada uma diz o que acontece sem ela.
+func (t *telaPlano) correcoes(w int) string {
+	p := t.p
+	if len(p.Correcoes) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(stCabecalho.Render(fmt.Sprintf("CORREÇÕES (%d)", len(p.Correcoes))) +
+		stDica.Render(" · aplicadas no destino junto "+comAcao(p)+" · espaço marca ou desmarca") + "\n")
+	for i, c := range p.Correcoes {
+		cur := "  "
+		if i == t.curCor && t.foco == focoCorrecoes {
+			cur = stSelecao.Render("▸ ")
+		}
+		caixa, texto := stOk.Render("[✔] "), stTexto.Render(c.Texto)
+		if !c.Marcada {
+			caixa, texto = stDica.Render("[ ] "), stDica.Render(c.Texto)
+		}
+		b.WriteString(quebrar(cur+caixa, texto, w) + "\n")
+		if !c.Marcada {
+			st := stAvisoV
+			if c.Bloqueia {
+				st = stPerigoV
+			}
+			b.WriteString(quebrar("      ", st.Render("sem ela: ")+stDica.Render(c.SeNao), w) + "\n")
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
 // anteriores é a lista dos __anterior do destino, fora da rolagem: ela fica sempre à vista, porque
 // a cópia sempre pergunta o que fazer com eles.
 func (t *telaPlano) anteriores(w, linhas int) string {
@@ -285,7 +371,7 @@ func (t *telaPlano) anteriores(w, linhas int) string {
 	for _, a := range p.Anteriores {
 		total += a.Tamanho
 	}
-	ativo := t.focoAnt || p.Confirmacao() == ""
+	ativo := t.foco == focoAnteriores
 	var b strings.Builder
 	cab := fmt.Sprintf("ANTERIORES DE %s NO DESTINO: %d, %s", p.Destino.Banco, len(p.Anteriores), motor.Tamanho(total))
 	b.WriteString(stCabecalho.Render(cab) + stDica.Render(" · marque com espaço os que quer APAGAR antes de começar") + "\n")
@@ -327,6 +413,9 @@ func (t *telaPlano) view(m *Model) string {
 		titulo = faixa(corPerigo, acao+p.Perfil.Nome+": bloqueado")
 	}
 	var rod strings.Builder
+	if l := t.correcoes(w); l != "" {
+		rod.WriteString(l + "\n\n")
+	}
 	if l := t.anteriores(w, limitar(m.altura/5, 2, 6)); l != "" {
 		rod.WriteString(l + "\n\n")
 	}
@@ -342,22 +431,27 @@ func (t *telaPlano) view(m *Model) string {
 	}
 	switch {
 	case p.Bloqueado():
-		rod.WriteString(dica("esc", "voltar") + stDica.Render("   a cópia não pode começar: resolva os itens em vermelho"))
+		ds := []string{dica("esc", "voltar")}
+		if len(p.Correcoes) > 0 {
+			ds = append(ds, dica("tab", "correções"), dica("espaço", "marcar"))
+		}
+		rod.WriteString(juntarDicas(ds...) + stDica.Render("   a cópia não pode começar: resolva os itens em vermelho"))
 	case p.Confirmacao() != "":
 		rod.WriteString(stRotulo.Render("Destino homolog: para "+verbo(p)+", digite o nome do banco ") + stValor.Render(p.Confirmacao()) + "\n" + t.entrada.View() + "\n")
 		ds := []string{dica("enter", verbo(p)), dica("esc", "cancelar")}
-		if len(p.Anteriores) > 0 {
-			if t.focoAnt {
-				ds = append(ds, dica("↑↓", "escolher"), dica("espaço", "marcar"), dica("tab", "nome"))
-			} else {
-				ds = append(ds, dica("tab", "marcar anteriores"))
-			}
+		if t.foco != focoNome {
+			ds = append(ds, dica("↑↓", "escolher"), dica("espaço", "marcar"), dica("tab", "nome"))
+		} else if len(t.focos()) > 1 {
+			ds = append(ds, dica("tab", "correções e anteriores"))
 		}
 		rod.WriteString(juntarDicas(ds...))
 	default:
 		ds := []string{dica("y", verbo(p)), dica("esc", "cancelar")}
-		if len(p.Anteriores) > 0 {
+		if len(t.focos()) > 0 {
 			ds = append(ds, dica("↑↓", "escolher"), dica("espaço", "marcar"))
+		}
+		if len(t.focos()) > 1 {
+			ds = append(ds, dica("tab", "correções ou anteriores"))
 		}
 		rod.WriteString(juntarDicas(ds...))
 	}
@@ -373,6 +467,17 @@ func (t *telaPlano) view(m *Model) string {
 	t.vp.SetContent(t.corpo(m))
 	tela := titulo + "\n\n" + t.vp.View() + "\n\n" + rodape
 	return lipgloss.NewStyle().Padding(0, 2).Render(ajustarAltura(recortar(tela, w+2), m.altura))
+}
+
+// comAcao é a ação do plano com o artigo: "com a cópia", "com o reset".
+func comAcao(p motor.Plano) string {
+	switch {
+	case p.Reset:
+		return "com o reset"
+	case p.DumpGuardado != "":
+		return "com a restauração"
+	}
+	return "com a cópia"
 }
 
 // verbo é a ação do plano, para a confirmação.

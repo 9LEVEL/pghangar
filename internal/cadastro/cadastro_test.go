@@ -129,6 +129,11 @@ func TestValidarConexaoTunel(t *testing.T) {
 	if err := x.Validar(); err != nil {
 		t.Fatalf("verify-full pelo túnel: %v", err)
 	}
+	x.SSLMode = "verify-ca"
+	if err := x.Validar(); err == nil {
+		t.Fatal("verify-ca pelo túnel, contra as CAs do sistema, aceitaria qualquer certificado público")
+	}
+	x.SSLMode = "require"
 	x.SSLMode, x.Host = "require", "/var/run/postgresql"
 	if err := x.Validar(); err == nil {
 		t.Fatal("socket pelo túnel deveria ser recusado")
@@ -249,5 +254,42 @@ func TestPerfilListasVaziasDoFormulario(t *testing.T) {
 	q.Tabelas = []string{"public.x"}
 	if err := c.SalvarPerfil(ctx, "p", q); err == nil {
 		t.Fatal("link instável com lista de tabelas deveria ser recusado")
+	}
+}
+
+// Achado da revisão: um perfil ou uma conexão novos com o nome de outro não o sobrescrevem.
+func TestNomeRepetidoNaoSobrescreve(t *testing.T) {
+	ctx := context.Background()
+	c := abrir(t)
+	if err := c.SalvarConexao(ctx, "", conexao("prod", TagProd)); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SalvarConexao(ctx, "", conexao("dev", TagDev)); err != nil {
+		t.Fatal(err)
+	}
+	outra := conexao("dev", TagDev)
+	outra.Host = "outro.host"
+	if err := c.SalvarConexao(ctx, "", outra); err == nil || !strings.Contains(err.Error(), "já existe") {
+		t.Fatalf("uma conexão nova com o nome de outra: %v", err)
+	}
+	if x, _ := c.Conexao(ctx, "dev"); x.Host == "outro.host" {
+		t.Fatal("a conexão existente foi sobrescrita")
+	}
+	p := Perfil{Nome: "loja", Origem: "prod", OrigemBanco: "loja", Destino: "dev", DestinoBanco: "loja", JobsDump: 2, JobsRestore: 2, Script: "/x.sql"}
+	if err := c.SalvarPerfil(ctx, "", p); err != nil {
+		t.Fatal(err)
+	}
+	p2 := p
+	p2.Script, p2.DestinoBanco = "", "loja_qa"
+	if err := c.SalvarPerfil(ctx, "", p2); err == nil || !strings.Contains(err.Error(), "já existe") {
+		t.Fatalf("um perfil novo com o nome de outro: %v", err)
+	}
+	if x, _ := c.Perfil(ctx, "loja"); x.Script != "/x.sql" || x.DestinoBanco != "loja" {
+		t.Fatalf("o perfil existente foi sobrescrito: %+v", x)
+	}
+	// Editar (antigo = o próprio nome) continua valendo.
+	p.JobsDump = 4
+	if err := c.SalvarPerfil(ctx, "loja", p); err != nil {
+		t.Fatal(err)
 	}
 }

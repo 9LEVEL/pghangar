@@ -292,3 +292,183 @@ func TestSSLModeDesconhecido(t *testing.T) {
 		t.Fatalf("esperava recusa do sslmode: %v", err)
 	}
 }
+
+// Pelo túnel, o verify-ca só vale com a CA do servidor: contra as do sistema, aceitaria qualquer
+// certificado público.
+func TestVerifyCASemCAERecusado(t *testing.T) {
+	cfg, _ := preparar(t)
+	cfg.SSLMode = "verify-ca"
+	if _, err := Abrir(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "verify-ca") {
+		t.Fatalf("verify-ca sem a CA deveria ser recusado: %v", err)
+	}
+}
+
+// No prefer, como o libpq: o banco com TLS que recusa a conexão cifrada logo de cara (um pg_hba só
+// com hostnossl) recebe a mesma conexão de novo, em claro.
+func TestPreferTentaDeNovoEmClaro(t *testing.T) {
+	_, cert := certificados(t, "127.0.0.1")
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				cab := make([]byte, 8)
+				if _, err := io.ReadFull(c, cab); err != nil {
+					return
+				}
+				if binary.BigEndian.Uint32(cab[4:8]) == codigoSSLRequest {
+					_, _ = c.Write([]byte{'S'})
+					s := tls.Server(c, &tls.Config{Certificates: []tls.Certificate{cert}})
+					if s.Handshake() != nil || leStartup(s) != nil {
+						return
+					}
+					// hostnossl: com TLS, não há entrada no pg_hba.
+					_, _ = s.Write(erroPG("28000", "no pg_hba.conf entry for host, SSL encryption"))
+					return
+				}
+				resto := make([]byte, binary.BigEndian.Uint32(cab[0:4])-8)
+				if _, err := io.ReadFull(c, resto); err != nil {
+					return
+				}
+				_, _ = c.Write(append(mensagemR(0, ""), "claro\n"...))
+			}(c)
+		}
+	}()
+	cfg, _ := preparar(t)
+	aceitarDireto(t, cfg)
+	cfg.Destino, cfg.SSLMode = l.Addr().String(), "prefer"
+	tn, err := Abrir(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tn.Fechar()
+	if got, _, err := conversar(t, tn, false); err != nil || got != "claro" {
+		t.Fatalf("o prefer deveria ter tentado em claro: %q %v", got, err)
+	}
+	// No require, a recusa chega ao cliente.
+	cfg.SSLMode = "require"
+	tn2, err := Abrir(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tn2.Fechar()
+	if _, _, err := conversar(t, tn2, false); err == nil || !strings.Contains(err.Error(), "28000") {
+		t.Fatalf("no require, a recusa do banco chega ao cliente: %v", err)
+	}
+}
+
+func leStartup(c net.Conn) error {
+	cab := make([]byte, 4)
+	if _, err := io.ReadFull(c, cab); err != nil {
+		return err
+	}
+	_, err := io.ReadFull(c, make([]byte, binary.BigEndian.Uint32(cab)-4))
+	return err
+}
+
+func erroPG(codigo, msg string) []byte {
+	corpo := []byte("SFATAL\x00C" + codigo + "\x00M" + msg + "\x00\x00")
+	return append(binary.BigEndian.AppendUint32([]byte{'E'}, uint32(4+len(corpo))), corpo...)
+}
+
+// O servidor SSH que não abre o canal: o cliente recebe o motivo (08006), e não só a conexão
+// fechada. Com e sem TLS.
+func TestCanalQueNaoAbreChegaAoCliente(t *testing.T) {
+	for _, modo := range []string{"require", "disable"} {
+		t.Run(modo, func(t *testing.T) {
+			_, cert := certificados(t, "127.0.0.1")
+			l, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			go func() {
+				for {
+					c, err := l.Accept()
+					if err != nil {
+						return
+					}
+					go atenderPG(c, &cert)
+				}
+			}()
+			cfg, _ := preparar(t)
+			aceitarDireto(t, cfg)
+			cfg.Destino, cfg.SSLMode = l.Addr().String(), modo
+			tn, err := Abrir(context.Background(), cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tn.Fechar()
+			_ = l.Close() // o banco cai depois de o túnel abrir
+			if _, _, err := conversar(t, tn, false); err == nil || !strings.Contains(err.Error(), "FATAL "+CodigoCanal) {
+				t.Fatalf("esperava o erro do canal: %v", err)
+			}
+		})
+	}
+}
+
+// Sem TLS, uma conexão que abre e fecha sem falar (a sondagem do túnel vivo) não chega ao banco.
+func TestConexaoMudaNaoChegaAoBanco(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	chegaram := make(chan struct{}, 10)
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			chegaram <- struct{}{}
+			_ = c.Close()
+		}
+	}()
+	cfg, _ := preparar(t)
+	aceitarDireto(t, cfg)
+	cfg.Destino, cfg.SSLMode = l.Addr().String(), "disable"
+	tn, err := Abrir(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tn.Fechar()
+	<-chegaram // o teste do caminho, no Abrir
+	c, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", tn.Porta()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = c.Close()
+	select {
+	case <-chegaram:
+		t.Fatal("a conexão muda abriu um canal até o banco")
+	case <-time.After(500 * time.Millisecond):
+	}
+}
+
+// A mensagem que o túnel manda ao cliente sai sem caracteres de controle: um NUL no texto de um
+// certificado forjaria outros campos do erro.
+func TestResponderErroSemControle(t *testing.T) {
+	a, b := net.Pipe()
+	go func() {
+		responderErro(a, CodigoTLS, "certificado de a\x00C28P01\x00Msenha errada \x1b]52;c;x\x07")
+		_ = a.Close()
+	}()
+	msg, err := lerMensagem(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := campoDoErro(msg, 'C'); c != CodigoTLS {
+		t.Fatalf("o código foi forjado: %q", c)
+	}
+	if m := campoDoErro(msg, 'M'); strings.ContainsAny(m, "\x00\x1b\x07") {
+		t.Fatalf("controle na mensagem: %q", m)
+	}
+}
