@@ -19,7 +19,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/9LEVEL/copia-banco/internal/testessh"
+	"github.com/9LEVEL/pghangar/internal/testessh"
 )
 
 // Com bastion: o SSH até o servidor passa por dentro dele, e as duas chaves de host são conferidas.
@@ -94,7 +94,7 @@ func preparar(t *testing.T) (Config, *testessh.Servidor) {
 	t.Setenv("SSH_AUTH_SOCK", "")
 	dir := t.TempDir()
 	chave := filepath.Join(dir, "id_ed25519")
-	if err := GerarChave(chave, "copia-banco@teste"); err != nil {
+	if err := GerarChave(chave, "pghangar@teste"); err != nil {
 		t.Fatal(err)
 	}
 	pub, err := ChavePublica(chave)
@@ -110,7 +110,7 @@ func preparar(t *testing.T) (Config, *testessh.Servidor) {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Parar)
-	return Config{Host: s.Host, Porta: s.Porta, Usuario: "copia-banco", Chave: chave,
+	return Config{Host: s.Host, Porta: s.Porta, Usuario: "pghangar", Chave: chave,
 		KnownHosts: filepath.Join(dir, "known_hosts"), Destino: eco(t), Prazo: 3 * time.Second}, s
 }
 

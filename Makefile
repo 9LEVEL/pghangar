@@ -1,19 +1,19 @@
-# copia-banco: compilar, testar e instalar.
+# pghangar: compilar, testar e instalar.
 #
-#   make                 compila em bin/copia-banco
+#   make                 compila em bin/pghangar
 #   make testar          testes unitários
 #   make integracao      testes de integração (containers presos em 127.0.0.1)
-#   sudo make instalar   instala em /opt/copia-banco e copia para /usr/local/bin
+#   sudo make instalar   instala em /opt/pghangar e copia para /usr/local/bin
 
-VERSAO  ?= v0.2.0
-OPT     ?= /opt/copia-banco
+VERSAO  ?= v0.3.0
+OPT     ?= /opt/pghangar
 BIN     ?= /usr/local/bin
 LDFLAGS := -s -w -X main.versao=$(VERSAO)
 
 .PHONY: compilar testar integracao instalar
 
 compilar:
-	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/copia-banco ./cmd/copia-banco
+	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/pghangar ./cmd/pghangar
 
 testar:
 	gofmt -l . | (! grep .)
@@ -27,6 +27,6 @@ integracao:
 # qualquer lugar (como o pgtower).
 instalar: compilar
 	install -d -m 755 $(OPT)
-	install -m 755 bin/copia-banco $(OPT)/copia-banco
-	install -m 755 bin/copia-banco $(BIN)/copia-banco
-	@$(BIN)/copia-banco versao
+	install -m 755 bin/pghangar $(OPT)/pghangar
+	install -m 755 bin/pghangar $(BIN)/pghangar
+	@$(BIN)/pghangar versao

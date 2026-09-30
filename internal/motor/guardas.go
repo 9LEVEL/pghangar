@@ -9,7 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/9LEVEL/copia-banco/internal/cadastro"
+	"github.com/9LEVEL/pghangar/internal/cadastro"
 )
 
 // guardaProd recusa escrever num servidor de produção. A tag é a primeira barreira; esta é a

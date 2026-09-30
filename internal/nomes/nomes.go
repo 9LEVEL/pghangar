@@ -27,7 +27,7 @@ const (
 	maiorSufixo    = len(MarcaAnterior) + tamanhoData // o anterior é o sufixo mais longo
 	espacoDaBase   = Limite - maiorSufixo
 	baseEncurtada  = espacoDaBase - 1 - tamanhoHash // "_" + hash
-	prefixoInterno = "copia_banco_"
+	prefixoInterno = "pghangar_"
 )
 
 // Base é o começo dos nomes derivados de um banco: o próprio nome, ou ele encurtado com hash.

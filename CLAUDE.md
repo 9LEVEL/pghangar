@@ -2,7 +2,7 @@
 
 ## O que é este repositório
 
-`copia-banco` é uma ferramenta de sysadmin, com TUI, que copia bancos PostgreSQL (16, 17 e 18)
+`pghangar` é uma ferramenta de sysadmin, com TUI, que copia bancos PostgreSQL (16, 17 e 18)
 por dump e restore, com `pg_dump` e `pg_restore` rodando em containers oficiais. O desenho está
 em `docs/ESTRATEGIA.md`, e o porquê de cada escolha, em `docs/DECISOES.md`.
 

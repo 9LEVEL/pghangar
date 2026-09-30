@@ -10,18 +10,18 @@ import (
 
 func TestArgs(t *testing.T) {
 	e := Execucao{
-		Imagem: "postgres@sha256:abc", Nome: "copia-banco-7-dump",
+		Imagem: "postgres@sha256:abc", Nome: "pghangar-7-dump",
 		Rotulos:  map[string]string{Rotulo: "7"},
-		Volumes:  []Volume{{Origem: "/var/lib/copia-banco/dumps/p", Destino: "/dump"}, {Origem: "/tmp/x.pgpass", Destino: "/run/copia-banco/pgpass", SoLeitura: true}},
-		Ambiente: map[string]string{"PGPASSFILE": "/run/copia-banco/pgpass"},
+		Volumes:  []Volume{{Origem: "/var/lib/pghangar/dumps/p", Destino: "/dump"}, {Origem: "/tmp/x.pgpass", Destino: "/run/pghangar/pgpass", SoLeitura: true}},
+		Ambiente: map[string]string{"PGPASSFILE": "/run/pghangar/pgpass"},
 		Comando:  []string{"pg_dump", "--jobs=2"},
 	}
 	a := strings.Join(e.Args(), " ")
 	for _, esperado := range []string{
-		"run --rm --pull never --network host --name copia-banco-7-dump",
-		"--label copia-banco.execucao=7",
-		"--volume /tmp/x.pgpass:/run/copia-banco/pgpass:ro",
-		"--env PGPASSFILE=/run/copia-banco/pgpass",
+		"run --rm --pull never --network host --name pghangar-7-dump",
+		"--label pghangar.execucao=7",
+		"--volume /tmp/x.pgpass:/run/pghangar/pgpass:ro",
+		"--env PGPASSFILE=/run/pghangar/pgpass",
 		"postgres@sha256:abc pg_dump --jobs=2",
 	} {
 		if !strings.Contains(a, esperado) {
@@ -71,7 +71,7 @@ func TestDigestEVersaoCliente(t *testing.T) {
 func TestRodarCodigoELinhas(t *testing.T) {
 	d := docker(t)
 	var linhas []string
-	cod, err := d.Rodar(context.Background(), Execucao{Imagem: "postgres:18", Nome: "copia-banco-teste-codigo",
+	cod, err := d.Rodar(context.Background(), Execucao{Imagem: "postgres:18", Nome: "pghangar-teste-codigo",
 		Comando: []string{"sh", "-c", "echo um; echo dois >&2; exit 3"}}, func(f, l string) { linhas = append(linhas, f+":"+l) })
 	if err != nil || cod != 3 {
 		t.Fatal(cod, err)
@@ -85,7 +85,7 @@ func TestRodarCodigoELinhas(t *testing.T) {
 func TestRodarCanceladoParaOContainer(t *testing.T) {
 	d := docker(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	nome := "copia-banco-teste-cancelar"
+	nome := "pghangar-teste-cancelar"
 	go func() {
 		time.Sleep(1500 * time.Millisecond)
 		cancel()

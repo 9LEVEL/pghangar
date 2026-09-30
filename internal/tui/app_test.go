@@ -15,13 +15,13 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"golang.org/x/crypto/ssh"
 
-	"github.com/9LEVEL/copia-banco/internal/cadastro"
-	"github.com/9LEVEL/copia-banco/internal/conexao"
-	"github.com/9LEVEL/copia-banco/internal/execucao"
-	"github.com/9LEVEL/copia-banco/internal/imagens"
-	"github.com/9LEVEL/copia-banco/internal/local"
-	"github.com/9LEVEL/copia-banco/internal/motor"
-	"github.com/9LEVEL/copia-banco/internal/tunel"
+	"github.com/9LEVEL/pghangar/internal/cadastro"
+	"github.com/9LEVEL/pghangar/internal/conexao"
+	"github.com/9LEVEL/pghangar/internal/execucao"
+	"github.com/9LEVEL/pghangar/internal/imagens"
+	"github.com/9LEVEL/pghangar/internal/local"
+	"github.com/9LEVEL/pghangar/internal/motor"
+	"github.com/9LEVEL/pghangar/internal/tunel"
 )
 
 type dockerFalso struct{}
@@ -395,7 +395,7 @@ func TestTamanhos(t *testing.T) {
 			if len(linhas) != tam[1] {
 				t.Errorf("%dx%d aba %d: %d linhas", tam[0], tam[1], aba, len(linhas))
 			}
-			if !strings.Contains(linhas[0], "copia-banco") {
+			if !strings.Contains(linhas[0], "pghangar") {
 				t.Errorf("%dx%d aba %d: o cabeçalho saiu do topo", tam[0], tam[1], aba)
 			}
 		}

@@ -20,7 +20,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/9LEVEL/copia-banco/internal/versoes"
+	"github.com/9LEVEL/pghangar/internal/versoes"
 )
 
 // Tags de conexão. Um banco "prod" nunca é destino.

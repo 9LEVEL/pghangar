@@ -23,11 +23,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/9LEVEL/copia-banco/internal/cadastro"
-	"github.com/9LEVEL/copia-banco/internal/conexao"
-	"github.com/9LEVEL/copia-banco/internal/local"
-	"github.com/9LEVEL/copia-banco/internal/motor"
-	"github.com/9LEVEL/copia-banco/internal/trava"
+	"github.com/9LEVEL/pghangar/internal/cadastro"
+	"github.com/9LEVEL/pghangar/internal/conexao"
+	"github.com/9LEVEL/pghangar/internal/local"
+	"github.com/9LEVEL/pghangar/internal/motor"
+	"github.com/9LEVEL/pghangar/internal/trava"
 )
 
 // Pedido é uma cópia confirmada.

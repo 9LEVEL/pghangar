@@ -1,4 +1,4 @@
-module github.com/9LEVEL/copia-banco
+module github.com/9LEVEL/pghangar
 
 go 1.27
 

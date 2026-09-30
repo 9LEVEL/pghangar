@@ -8,10 +8,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/9LEVEL/copia-banco/internal/cadastro"
-	"github.com/9LEVEL/copia-banco/internal/conexao"
-	"github.com/9LEVEL/copia-banco/internal/motor"
-	"github.com/9LEVEL/copia-banco/internal/nomes"
+	"github.com/9LEVEL/pghangar/internal/cadastro"
+	"github.com/9LEVEL/pghangar/internal/conexao"
+	"github.com/9LEVEL/pghangar/internal/motor"
+	"github.com/9LEVEL/pghangar/internal/nomes"
 )
 
 // abaAnteriores mostra, por destino dos perfis, os bancos que a ferramenta deixou: os __anterior

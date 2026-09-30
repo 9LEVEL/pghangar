@@ -1,9 +1,9 @@
-// copia-banco: copia bancos PostgreSQL de um servidor para outro por dump e restore, com os
+// pghangar: copia bancos PostgreSQL de um servidor para outro por dump e restore, com os
 // clientes oficiais em containers. Ver docs/ESTRATEGIA.md.
 //
-//	copia-banco [--dir D]                                   a tela
-//	copia-banco executar --dir D --execucao N [--trocar]    o processo de uma cópia (a tela sobe)
-//	copia-banco versao
+//	pghangar [--dir D]                                   a tela
+//	pghangar executar --dir D --execucao N [--trocar]    o processo de uma cópia (a tela sobe)
+//	pghangar versao
 package main
 
 import (
@@ -19,14 +19,14 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/9LEVEL/copia-banco/internal/cadastro"
-	"github.com/9LEVEL/copia-banco/internal/conexao"
-	"github.com/9LEVEL/copia-banco/internal/execucao"
-	"github.com/9LEVEL/copia-banco/internal/imagens"
-	"github.com/9LEVEL/copia-banco/internal/local"
-	"github.com/9LEVEL/copia-banco/internal/motor"
-	"github.com/9LEVEL/copia-banco/internal/trava"
-	"github.com/9LEVEL/copia-banco/internal/tui"
+	"github.com/9LEVEL/pghangar/internal/cadastro"
+	"github.com/9LEVEL/pghangar/internal/conexao"
+	"github.com/9LEVEL/pghangar/internal/execucao"
+	"github.com/9LEVEL/pghangar/internal/imagens"
+	"github.com/9LEVEL/pghangar/internal/local"
+	"github.com/9LEVEL/pghangar/internal/motor"
+	"github.com/9LEVEL/pghangar/internal/trava"
+	"github.com/9LEVEL/pghangar/internal/tui"
 )
 
 // versao é gravada no build (-ldflags "-X main.versao=v0.1.0"); sem ela, vale o commit.
@@ -61,7 +61,7 @@ func Versao() string {
 
 func main() {
 	if err := rodar(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "copia-banco:", err)
+		fmt.Fprintln(os.Stderr, "pghangar:", err)
 		var s *saida
 		if errors.As(err, &s) {
 			os.Exit(s.codigo)
@@ -82,7 +82,7 @@ func rodar(args []string) error {
 	if len(args) > 0 {
 		switch args[0] {
 		case "versao", "--versao", "version", "--version":
-			fmt.Println("copia-banco", Versao())
+			fmt.Println("pghangar", Versao())
 			return nil
 		case "ajuda", "--ajuda", "-h", "--help", "help":
 			fmt.Print(ajuda)
@@ -93,26 +93,26 @@ func rodar(args []string) error {
 			return rodarPerfil(args[1:])
 		}
 	}
-	fs := flag.NewFlagSet("copia-banco", flag.ContinueOnError)
+	fs := flag.NewFlagSet("pghangar", flag.ContinueOnError)
 	dir := fs.String("dir", local.Padrao, "o diretório da ferramenta")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() > 0 {
-		return fmt.Errorf("comando desconhecido: %s (veja copia-banco ajuda)", fs.Arg(0))
+		return fmt.Errorf("comando desconhecido: %s (veja pghangar ajuda)", fs.Arg(0))
 	}
 	return tela(local.Dir{Raiz: *dir})
 }
 
-const ajuda = `copia-banco: copia bancos PostgreSQL (16, 17, 18) por dump e restore, em containers.
+const ajuda = `pghangar: copia bancos PostgreSQL (16, 17, 18) por dump e restore, em containers.
 
-  copia-banco [--dir D]     abre a tela (o padrão de D é /var/lib/copia-banco)
-  copia-banco rodar [--dir D] [--confirmar BANCO] PERFIL
+  pghangar [--dir D]     abre a tela (o padrão de D é /var/lib/pghangar)
+  pghangar rodar [--dir D] [--confirmar BANCO] PERFIL
                             copia sem a tela (para o cron): num destino homolog, --confirmar
                             com o nome do banco é obrigatório. Nunca apaga anteriores.
                             Sai com 0 (ok), 2 (a troca espera a decisão, pela tela) ou 1 (erro)
-  copia-banco versao        mostra a versão
-  copia-banco ajuda         esta ajuda
+  pghangar versao        mostra a versão
+  pghangar ajuda         esta ajuda
 
 Roda como root. O subcomando "executar" é o processo de uma cópia: quem o sobe é a tela.
 `
@@ -177,7 +177,7 @@ func executar(args []string) error {
 		return err
 	}
 	defer log.Close()
-	fmt.Fprintf(log, "copia-banco %s: processo %d da execução %d\n", Versao(), os.Getpid(), *id)
+	fmt.Fprintf(log, "pghangar %s: processo %d da execução %d\n", Versao(), os.Getpid(), *id)
 	return execucao.Trabalhar(ctx, deps(d, cad, seg, log), *id, *trocar)
 }
 
@@ -205,7 +205,7 @@ func rodarPerfil(args []string) error {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return errors.New("use: copia-banco rodar [--confirmar BANCO] PERFIL")
+		return errors.New("use: pghangar rodar [--confirmar BANCO] PERFIL")
 	}
 	nome := fs.Arg(0)
 	d := local.Dir{Raiz: *dir}

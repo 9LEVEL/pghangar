@@ -15,11 +15,11 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/9LEVEL/copia-banco/internal/cadastro"
-	"github.com/9LEVEL/copia-banco/internal/conexao"
-	"github.com/9LEVEL/copia-banco/internal/imagens"
-	"github.com/9LEVEL/copia-banco/internal/nomes"
-	"github.com/9LEVEL/copia-banco/internal/versoes"
+	"github.com/9LEVEL/pghangar/internal/cadastro"
+	"github.com/9LEVEL/pghangar/internal/conexao"
+	"github.com/9LEVEL/pghangar/internal/imagens"
+	"github.com/9LEVEL/pghangar/internal/nomes"
+	"github.com/9LEVEL/pghangar/internal/versoes"
 )
 
 // Etapas da cópia, na ordem. A conferência vem logo depois do restore: o script pós-restore pode
@@ -32,8 +32,8 @@ var Etapas = []string{
 
 const (
 	dentroTrabalho = "/trabalho"
-	dentroPgpass   = "/run/copia-banco/pgpass"
-	dentroScript   = "/run/copia-banco/script.sql"
+	dentroPgpass   = "/run/pghangar/pgpass"
+	dentroScript   = "/run/pghangar/script.sql"
 )
 
 // Manifesto descreve um dump guardado. Fica ao lado do dump, em manifesto.json.
@@ -440,7 +440,7 @@ func (r *corrida) rodar(ctx context.Context, sufixo string, comando []string, ex
 	}
 	e := imagens.Execucao{
 		// O nome leva a instância: duas instalações no mesmo Docker têm, cada uma, a sua execução 1.
-		Imagem: r.p.ImagemRef, Nome: fmt.Sprintf("copia-banco-%s-%d-%s", r.instancia(), r.e.ID, sufixo),
+		Imagem: r.p.ImagemRef, Nome: fmt.Sprintf("pghangar-%s-%d-%s", r.instancia(), r.e.ID, sufixo),
 		Rotulos: map[string]string{imagens.Rotulo: strconv.FormatInt(r.e.ID, 10), imagens.RotuloInstancia: r.instancia()},
 		Volumes: vols, Ambiente: env, Comando: comando,
 	}
@@ -628,7 +628,7 @@ func argsDump(p Plano) []string {
 
 func (r *corrida) dumpUmaVez(ctx context.Context) error {
 	p := r.p
-	app := fmt.Sprintf("copia-banco/%s/%s", r.d.Maquina, p.Perfil.Nome)
+	app := fmt.Sprintf("pghangar/%s/%s", r.d.Maquina, p.Perfil.Nome)
 	args := argsDump(p)
 
 	// A contagem de linhas usa o mesmo snapshot do dump: um snapshot exportado, que o pg_dump
@@ -757,7 +757,7 @@ func (r *corrida) restore(ctx context.Context) (int, error) {
 	}
 	args := []string{fmt.Sprintf("--jobs=%d", p.Perfil.JobsRestore), "--verbose", "--no-owner", "--no-privileges",
 		"--no-tablespaces", "--no-subscriptions", "--no-publications", "--role=" + r.role,
-		"--dbname=" + conexao.DSN(r.destino.c, r.destino.ponte, r.e.BancoNovo, "copia-banco"), dentroTrabalho + "/dump"}
+		"--dbname=" + conexao.DSN(r.destino.c, r.destino.ponte, r.e.BancoNovo, "pghangar"), dentroTrabalho + "/dump"}
 	if err := versoes.Conferir("pg_restore", args, p.Imagem); err != nil {
 		return 0, err
 	}
@@ -801,7 +801,7 @@ func (r *corrida) script(ctx context.Context) error {
 		return err
 	}
 	args := []string{"--no-psqlrc", "--set=ON_ERROR_STOP=1", "--file=" + dentroScript,
-		"--dbname=" + conexao.DSN(r.destino.c, r.destino.ponte, r.e.BancoNovo, "copia-banco/script")}
+		"--dbname=" + conexao.DSN(r.destino.c, r.destino.ponte, r.e.BancoNovo, "pghangar/script")}
 	if err := versoes.Conferir("psql", args, r.p.Imagem); err != nil {
 		return err
 	}
@@ -1036,7 +1036,7 @@ func (r *corrida) configuracoes(ctx context.Context) error {
 
 func (r *corrida) analyze(ctx context.Context) error {
 	args := []string{"--analyze-only", fmt.Sprintf("--jobs=%d", r.p.Perfil.JobsRestore),
-		"--dbname=" + conexao.DSN(r.destino.c, r.destino.ponte, r.e.BancoNovo, "copia-banco")}
+		"--dbname=" + conexao.DSN(r.destino.c, r.destino.ponte, r.e.BancoNovo, "pghangar")}
 	if err := versoes.Conferir("vacuumdb", args, r.p.Imagem); err != nil {
 		return err
 	}
@@ -1346,7 +1346,7 @@ func (r *corrida) guardarBase(ctx context.Context) error {
 		"CREATE DATABASE " + id(base) + " TEMPLATE " + id(novo) + estrategiaCopia(r.p.Destino.VersaoNum) + " OWNER " + id(r.destino.c.Usuario),
 		"REVOKE ALL ON DATABASE " + id(base) + " FROM PUBLIC",
 		"ALTER DATABASE " + id(base) + " ALLOW_CONNECTIONS false",
-		"COMMENT ON DATABASE " + id(base) + " IS " + lit(fmt.Sprintf("copia-banco: base de %s, da cópia #%d de %s/%s em %s",
+		"COMMENT ON DATABASE " + id(base) + " IS " + lit(fmt.Sprintf("pghangar: base de %s, da cópia #%d de %s/%s em %s",
 			b, r.e.ID, r.p.Origem.Conexao, r.p.Origem.Banco, time.Now().Format("2006-01-02 15:04"))),
 	}
 	for _, c := range cmds {

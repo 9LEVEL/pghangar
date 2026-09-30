@@ -1,6 +1,6 @@
-# Estratégia do `copia-banco`
+# Estratégia do `pghangar`
 
-> **Estado: fase 1 implementada** (§16). O porquê de cada escolha fica em `docs/DECISOES.md`.
+> **Estado: fases 1, 2 e 3 implementadas** (§16). O porquê de cada escolha fica em `docs/DECISOES.md`.
 
 ## 1. O que é
 
@@ -103,11 +103,12 @@ o túnel é obrigatório e faz parte da fase 1.
 `authorized_keys` em cada host.
 
 **No host da produção (o sysadmin faz uma vez; a TUI mostra o texto pronto):**
-- um usuário Linux dedicado (`copia-banco`), sem shell;
+- um usuário Linux dedicado (`pghangar`), sem shell. O nome dele fica na conexão: um usuário
+  criado antes com outro nome (como `copia-banco`) continua valendo;
 - no `authorized_keys` dele, a chave **só abre o túnel até a porta do banco**:
 
   ```
-  restrict,port-forwarding,permitopen="127.0.0.1:5432",command="/bin/false" ssh-ed25519 AAAA… copia-banco@<servidor-dev>
+  restrict,port-forwarding,permitopen="127.0.0.1:5432",command="/bin/false" ssh-ed25519 AAAA… pghangar@<servidor-dev>
   ```
 
   Ela não roda comando, não abre terminal e não alcança outra porta. Quem a roubar ainda precisa
@@ -164,8 +165,8 @@ o túnel é obrigatório e faz parte da fase 1.
 
 ### Como o container roda
 
-- `docker run --rm --network host`, com o nome `copia-banco-<instância>-<execução>-<etapa>` e os
-  labels `copia-banco.execucao=<id>` e `copia-banco.instancia=<instância>`. O label permite achar e
+- `docker run --rm --network host`, com o nome `pghangar-<instância>-<execução>-<etapa>` e os
+  labels `pghangar.execucao=<id>` e `pghangar.instancia=<instância>`. O label permite achar e
   parar containers órfãos, só desta instalação: outra instalação no mesmo Docker tem a sua própria
   execução 1.
 - **O diretório do dump é montado** como volume.
@@ -173,7 +174,7 @@ o túnel é obrigatório e faz parte da fase 1.
   - o arquivo tem permissão `600` e é montado só para leitura (`PGPASSFILE`);
   - é apagado ao fim da execução (ou pela tela, se o processo morrer). Com a role temporária
     (§7), é o único que a ferramenta apaga sozinha: são artefatos dela, e não dados.
-- **`PGAPPNAME=copia-banco/<servidor>/<perfil>`:** quem olha o `pg_stat_activity` da produção
+- **`PGAPPNAME=pghangar/<servidor>/<perfil>`:** quem olha o `pg_stat_activity` da produção
   vê de onde vem a carga.
 
 ## 6. Perfis
@@ -224,7 +225,7 @@ cópia aparecem puladas: sem anteriores marcados, sem script, destino que ainda 
    é o superusuário da conexão, e `PUBLIC` não conecta. Durante o restore, tudo lá dentro é da role
    temporária de superusuário, e uma função `SECURITY DEFINER` vinda da origem seria um atalho para
    superusuário a qualquer login do servidor. Cria também a **role temporária**
-   `copia_banco_<instância>_<execução>`, `SUPERUSER NOLOGIN`.
+   `pghangar_<instância>_<execução>`, `SUPERUSER NOLOGIN`.
 6. **Restore:** `pg_restore -j N --no-owner --no-privileges --no-tablespaces --no-subscriptions
    --no-publications --role=<role temporária>`.
    - Tudo nasce com a role temporária, que é superusuário: extensões, event triggers e o resto
@@ -338,7 +339,7 @@ que ficou rodando aparece como **órfão** na aba Ambiente.
 - no dump, as tabelas concluídas contra o total lido no catálogo da origem;
 - no restore, os objetos concluídos contra o índice do dump (`pg_restore -l`).
 
-**Sem a tela, para scripts e cron:** `copia-banco rodar <perfil>`.
+**Sem a tela, para scripts e cron:** `pghangar rodar <perfil>`.
 - Num destino `homolog`, é obrigatório `--confirmar <banco>`.
 - **Nunca apaga nada:** um `__novo` que sobrou impede a execução, e isso é informado.
 
@@ -352,7 +353,7 @@ que ficou rodando aparece como **órfão** na aba Ambiente.
 
 ## 13. Onde ficam as coisas
 
-Tudo sob `/var/lib/copia-banco` (a opção `--dir` troca o diretório). A ferramenta **exige root**
+Tudo sob `/var/lib/pghangar` (a opção `--dir` troca o diretório). A ferramenta **exige root**
 e **se recusa a abrir** se as permissões estiverem frouxas, como o OpenSSH.
 
 | caminho | o quê | permissão |
@@ -389,7 +390,7 @@ andamento.
 
 | pacote | responsabilidade |
 |---|---|
-| `cmd/copia-banco` | a linha de comando: `tui` (o padrão), `rodar`, `executar` |
+| `cmd/pghangar` | a linha de comando: `tui` (o padrão), `rodar`, `executar` |
 | `internal/cadastro` | o SQLite: conexões, perfis, imagens, execuções |
 | `internal/conexao` | conectar e fazer o diagnóstico em camadas |
 | `internal/tunel` | o túnel SSH, as chaves e o `known_hosts` |
@@ -411,12 +412,12 @@ andamento.
 | | **As fases 1, 2 e 3 estão prontas** (2026-09-29), testadas só em localhost. Ficaram de fora da 3: o modo rápido com pgcopydb (exige outra imagem, e o link instável já cobre o problema principal) e a anonimização (não é necessária). |
 | **1** | conexões com diagnóstico e leitura da versão; **túnel SSH com chaves, `known_hosts` e instruções para o host da produção**; imagens (baixar e travar); perfis com tabelas sem dados e script pós-restore; o motor completo; confirmações; `__anterior` com pergunta e desfazer; aba Dumps; execução separada; histórico |
 | **1+** | as melhorias depois da pesquisa de mercado (`docs/MERCADO.md`): compressão zstd/lz4; filtro de schemas e tabelas (com `--extension=*`); **servidores de destino aprovados** (tecla `v`); checagens de disco local e de roles citadas pela RLS; quem rodou (o login por trás do sudo); os bancos por sugestão no formulário (`ctrl+n`); o dump refeito sozinho quando o túnel cai |
-| **2** | atualizar imagens (`u`, com confirmação; as antigas ficam); restaurar um dump guardado (aba 4, `r`, sem ir à origem); `copia-banco rodar` para o cron; **contagem exata de linhas no mesmo snapshot do dump** (`pg_export_snapshot` + `pg_dump --snapshot`) |
+| **2** | atualizar imagens (`u`, com confirmação; as antigas ficam); restaurar um dump guardado (aba 4, `r`, sem ir à origem); `pghangar rodar` para o cron; **contagem exata de linhas no mesmo snapshot do dump** (`pg_export_snapshot` + `pg_dump --snapshot`) |
 | **3** | **dump retomável para link instável** (abaixo); aviso ao terminar por webhook; **grupos de perfis** em fila (espaço marca, enter copia); **bastion**; **banco base e "resetar da base"** (`z`) |
 
-### Sem a tela: `copia-banco rodar`
+### Sem a tela: `pghangar rodar`
 
-`copia-banco rodar [--confirmar BANCO] PERFIL` roda uma cópia no primeiro plano, para o cron ou um
+`pghangar rodar [--confirmar BANCO] PERFIL` roda uma cópia no primeiro plano, para o cron ou um
 timer do systemd.
 - **Não pergunta nada:** senha "perguntar", passphrase e servidor SSH desconhecido viram erro, e se
   resolvem pela tela antes.

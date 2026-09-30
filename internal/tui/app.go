@@ -13,10 +13,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/9LEVEL/copia-banco/internal/cadastro"
-	"github.com/9LEVEL/copia-banco/internal/conexao"
-	"github.com/9LEVEL/copia-banco/internal/motor"
-	"github.com/9LEVEL/copia-banco/internal/tunel"
+	"github.com/9LEVEL/pghangar/internal/cadastro"
+	"github.com/9LEVEL/pghangar/internal/conexao"
+	"github.com/9LEVEL/pghangar/internal/motor"
+	"github.com/9LEVEL/pghangar/internal/tunel"
 )
 
 // Abas, na ordem das teclas 1 a 6.
@@ -543,7 +543,7 @@ func versao(v string) string {
 }
 
 func (m *Model) cabecalho() string {
-	esq := stTitulo.Render(" copia-banco ") + stVersao.Render(versao(m.o.Versao))
+	esq := stTitulo.Render(" pghangar ") + stVersao.Render(versao(m.o.Versao))
 	maq := lipgloss.NewStyle().Bold(true).Foreground(corSobre).Background(corApagada).Padding(0, 1).Render(m.maquina)
 	// O diretório é o que sai primeiro quando falta espaço; o host fica: é ele que diz onde se está.
 	dir := m.seloAndamento() + " " + maq + stStatus.Render(" "+m.usuario+" · "+m.o.Dir.Raiz+" ")
@@ -710,7 +710,7 @@ func (m *Model) viewAjuda() string {
 func (m *Model) caixaAjuda() string {
 	w := m.ajudaVP.Width
 	larg := lipgloss.NewStyle().Width(w)
-	ident := stTitulo.Render(" copia-banco ") + stVersao.Render(versao(m.o.Versao))
+	ident := stTitulo.Render(" pghangar ") + stVersao.Render(versao(m.o.Versao))
 	desc := larg.Foreground(corApagada).Render("Copia bancos PostgreSQL (16, 17, 18) por dump e restore, com os clientes oficiais em containers. " +
 		"O destino é trocado por nome: o antigo vira __anterior, e nada é apagado sem pergunta.")
 	onde := larg.Render(stRotulo.Render("host ") + stValor.Render(m.maquina) + stRotulo.Render("   usuário ") + stValor.Render(m.usuario) +

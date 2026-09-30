@@ -10,11 +10,11 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/9LEVEL/copia-banco/internal/cadastro"
-	"github.com/9LEVEL/copia-banco/internal/conexao"
-	"github.com/9LEVEL/copia-banco/internal/execucao"
-	"github.com/9LEVEL/copia-banco/internal/motor"
-	"github.com/9LEVEL/copia-banco/internal/versoes"
+	"github.com/9LEVEL/pghangar/internal/cadastro"
+	"github.com/9LEVEL/pghangar/internal/conexao"
+	"github.com/9LEVEL/pghangar/internal/execucao"
+	"github.com/9LEVEL/pghangar/internal/motor"
+	"github.com/9LEVEL/pghangar/internal/versoes"
 )
 
 type abaConexoes struct {
@@ -37,7 +37,7 @@ func (a *abaConexoes) tecla(m *Model, k tea.KeyMsg) tea.Cmd {
 	case "down", "j":
 		a.cursor = min(a.cursor+1, max(len(m.conexoes)-1, 0))
 	case "a":
-		return a.formulario(m, cadastro.Conexao{Tag: semTag, Acesso: cadastro.AcessoDireto, SSHPorta: 22, SSHUsuario: "copia-banco",
+		return a.formulario(m, cadastro.Conexao{Tag: semTag, Acesso: cadastro.AcessoDireto, SSHPorta: 22, SSHUsuario: "pghangar",
 			Host: "127.0.0.1", Porta: 5432, Usuario: "postgres", ModoSenha: cadastro.SenhaGuardar, SSLMode: "prefer", BancoAdmin: "postgres"}, "")
 	case "e", "enter":
 		if c, ok := a.atual(m); ok {
@@ -365,7 +365,7 @@ func (a *abaConexoes) formulario(m *Model, c cadastro.Conexao, antigo string) te
 		novoCampo("ssh_chave", "Chave SSH", c.SSHChave, "Vazio usa a chave da ferramenta ("+m.o.Dir.ChaveSSH()+"). Com passphrase, ela é pedida a cada sessão.", nil),
 		novoCampo("salto_host", "Bastion", c.SaltoHost, "Opcional: o host de salto por onde o SSH passa até o servidor. A mesma chave; a chave dele também é conferida no known_hosts.", nil),
 		novoCampo("salto_porta", "Porta do bastion", strconv.Itoa(max(c.SaltoPorta, 22)), "", porta),
-		novoCampo("salto_usuario", "Usuário no bastion", orDefault(c.SaltoUsuario, "copia-banco"), "", nil),
+		novoCampo("salto_usuario", "Usuário no bastion", orDefault(c.SaltoUsuario, "pghangar"), "", nil),
 		novoCampo("host", "Host do banco", c.Host, "Direto: o endereço do banco (ou o diretório do socket, como /var/run/postgresql). Pelo túnel: o banco visto do servidor SSH, normalmente 127.0.0.1.", obrig),
 		novoCampo("porta", "Porta do banco", strconv.Itoa(c.Porta), "", porta),
 		novoCampo("usuario", "Usuário do banco", c.Usuario, "Um superusuário: a ferramenta é de sysadmin.", obrig),

@@ -18,8 +18,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/9LEVEL/copia-banco/internal/cadastro"
-	"github.com/9LEVEL/copia-banco/internal/tunel"
+	"github.com/9LEVEL/pghangar/internal/cadastro"
+	"github.com/9LEVEL/pghangar/internal/tunel"
 )
 
 // Ambiente são os arquivos da ferramenta que a conexão usa.
@@ -218,7 +218,7 @@ func LinhaPgpass(c cadastro.Conexao, p *Ponte, senha string) string {
 
 // Conectar abre uma conexão pgx pela ponte.
 func Conectar(ctx context.Context, c cadastro.Conexao, p *Ponte, senha, banco string, prazo time.Duration) (*pgx.Conn, error) {
-	cfg, err := pgx.ParseConfig(DSN(c, p, banco, "copia-banco"))
+	cfg, err := pgx.ParseConfig(DSN(c, p, banco, "pghangar"))
 	if err != nil {
 		return nil, err
 	}

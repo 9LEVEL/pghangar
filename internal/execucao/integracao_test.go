@@ -24,26 +24,27 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/sys/unix"
 
-	"github.com/9LEVEL/copia-banco/internal/cadastro"
-	"github.com/9LEVEL/copia-banco/internal/conexao"
-	"github.com/9LEVEL/copia-banco/internal/imagens"
-	"github.com/9LEVEL/copia-banco/internal/local"
-	"github.com/9LEVEL/copia-banco/internal/motor"
-	"github.com/9LEVEL/copia-banco/internal/testessh"
-	"github.com/9LEVEL/copia-banco/internal/tunel"
+	"github.com/9LEVEL/pghangar/internal/cadastro"
+	"github.com/9LEVEL/pghangar/internal/conexao"
+	"github.com/9LEVEL/pghangar/internal/imagens"
+	"github.com/9LEVEL/pghangar/internal/local"
+	"github.com/9LEVEL/pghangar/internal/motor"
+	"github.com/9LEVEL/pghangar/internal/testessh"
+	"github.com/9LEVEL/pghangar/internal/tunel"
 )
 
 const senha = "e2e-S3nh@-única-9f2c"
 
 func subir(t *testing.T, nome string, versao int) int {
 	t.Helper()
-	_ = exec.Command("docker", "rm", "-f", nome).Run()
+	// -v: a imagem do postgres declara VOLUME; um rm -f explícito passa na frente do --rm e o volume anônimo (GBs) fica órfão.
+	_ = exec.Command("docker", "rm", "-fv", nome).Run()
 	out, err := exec.Command("docker", "run", "-d", "--rm", "--name", nome, "-e", "POSTGRES_PASSWORD="+senha,
 		"-p", "127.0.0.1::5432", fmt.Sprintf("postgres:%d", versao)).CombinedOutput()
 	if err != nil {
 		t.Fatalf("%v %s", err, out)
 	}
-	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", nome).Run() })
+	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-fv", nome).Run() })
 	out, _ = exec.Command("docker", "port", nome, "5432/tcp").Output()
 	l := strings.Split(strings.TrimSpace(string(out)), "\n")[0]
 	if !strings.HasPrefix(l, "127.0.0.1:") {
@@ -120,13 +121,13 @@ func esperar(t *testing.T, cad *cadastro.Cadastro, id int64, cond func(cadastro.
 func TestPontaAPontaComOBinario(t *testing.T) {
 	ctx := context.Background()
 	raiz, _ := filepath.Abs("../..")
-	bin := filepath.Join(t.TempDir(), "copia-banco")
-	if out, err := exec.Command("go", "build", "-o", bin, filepath.Join(raiz, "cmd", "copia-banco")).CombinedOutput(); err != nil {
+	bin := filepath.Join(t.TempDir(), "pghangar")
+	if out, err := exec.Command("go", "build", "-o", bin, filepath.Join(raiz, "cmd", "pghangar")).CombinedOutput(); err != nil {
 		t.Fatalf("build: %v %s", err, out)
 	}
 
-	origem := subir(t, "copia-banco-e2e-o16", 16)
-	destino := subir(t, "copia-banco-e2e-d18", 18)
+	origem := subir(t, "pghangar-e2e-o16", 16)
+	destino := subir(t, "pghangar-e2e-d18", 18)
 	sql(t, origem, "postgres", "CREATE DATABASE loja")
 	sql(t, origem, "loja", "CREATE SCHEMA vendas",
 		"CREATE TABLE vendas.pedido (id bigserial PRIMARY KEY, valor numeric)",
@@ -172,7 +173,7 @@ func TestPontaAPontaComOBinario(t *testing.T) {
 		}
 	}
 	must(cad.SalvarConexao(ctx, "", cadastro.Conexao{Nome: "prod", Tag: cadastro.TagProd, Acesso: cadastro.AcessoSSH, SSHHost: srv.Host,
-		SSHPorta: srv.Porta, SSHUsuario: "copia-banco", Host: "127.0.0.1", Porta: origem, Usuario: "postgres",
+		SSHPorta: srv.Porta, SSHUsuario: "pghangar", Host: "127.0.0.1", Porta: origem, Usuario: "postgres",
 		ModoSenha: cadastro.SenhaPerguntar, SSLMode: "prefer", BancoAdmin: "postgres"}))
 	must(cad.SalvarConexao(ctx, "", cadastro.Conexao{Nome: "dev", Tag: cadastro.TagDev, Acesso: cadastro.AcessoDireto, Host: "127.0.0.1",
 		Porta: destino, Usuario: "postgres", ModoSenha: cadastro.SenhaPerguntar, SSLMode: "disable", BancoAdmin: "postgres"}))
@@ -317,7 +318,7 @@ func TestPontaAPontaComOBinario(t *testing.T) {
 		t.Fatal("durante o restore, o dono do __novo é o superusuário da conexão")
 	}
 	inst, _ := cad.Instancia(ctx)
-	role := fmt.Sprintf("copia_banco_%s_%d", inst, id3)
+	role := fmt.Sprintf("pghangar_%s_%d", inst, id3)
 	if n := contar(t, destino, "postgres", fmt.Sprintf(`SELECT count(*) FROM pg_roles WHERE rolname = '%s'`, role)); n != 1 {
 		t.Fatalf("a role temporária deveria ter sobrado depois do kill -9 (é o caso que a limpeza cobre): %d", n)
 	}

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/9LEVEL/copia-banco/internal/cadastro"
+	"github.com/9LEVEL/pghangar/internal/cadastro"
 )
 
 func conexaoTeste() cadastro.Conexao {
@@ -19,11 +19,11 @@ func conexaoTeste() cadastro.Conexao {
 func TestDSNSemSenhaEComAspas(t *testing.T) {
 	c := conexaoTeste()
 	c.Usuario = "o'brien"
-	d := DSN(c, &Ponte{Host: "127.0.0.1", Porta: 40001}, "minha loja", "copia-banco/srv/p 1")
+	d := DSN(c, &Ponte{Host: "127.0.0.1", Porta: 40001}, "minha loja", "pghangar/srv/p 1")
 	if strings.Contains(d, "password") {
 		t.Fatal("o DSN nunca leva senha")
 	}
-	for _, esperado := range []string{`host=127.0.0.1`, `port=40001`, `user='o\'brien'`, `dbname='minha loja'`, `application_name='copia-banco/srv/p 1'`} {
+	for _, esperado := range []string{`host=127.0.0.1`, `port=40001`, `user='o\'brien'`, `dbname='minha loja'`, `application_name='pghangar/srv/p 1'`} {
 		if !strings.Contains(d, esperado) {
 			t.Errorf("faltou %s em %s", esperado, d)
 		}

@@ -25,13 +25,13 @@ import (
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/ssh"
 
-	"github.com/9LEVEL/copia-banco/internal/cadastro"
-	"github.com/9LEVEL/copia-banco/internal/conexao"
-	"github.com/9LEVEL/copia-banco/internal/imagens"
-	"github.com/9LEVEL/copia-banco/internal/local"
-	"github.com/9LEVEL/copia-banco/internal/testessh"
-	"github.com/9LEVEL/copia-banco/internal/trava"
-	"github.com/9LEVEL/copia-banco/internal/tunel"
+	"github.com/9LEVEL/pghangar/internal/cadastro"
+	"github.com/9LEVEL/pghangar/internal/conexao"
+	"github.com/9LEVEL/pghangar/internal/imagens"
+	"github.com/9LEVEL/pghangar/internal/local"
+	"github.com/9LEVEL/pghangar/internal/testessh"
+	"github.com/9LEVEL/pghangar/internal/trava"
+	"github.com/9LEVEL/pghangar/internal/tunel"
 )
 
 const senhaTeste = "s3nh@:com'aspas\\e barra"
@@ -55,7 +55,7 @@ func subir(t *testing.T, chave string, versao int) *pg {
 	if s, ok := servidor[chave]; ok {
 		return s
 	}
-	nome := fmt.Sprintf("copia-banco-teste-%s-%d", chave, rand.Intn(1_000_000))
+	nome := fmt.Sprintf("pghangar-teste-%s-%d", chave, rand.Intn(1_000_000))
 	out, err := exec.Command("docker", "run", "-d", "--rm", "--name", nome, "-e", "POSTGRES_PASSWORD="+senhaTeste,
 		"-p", "127.0.0.1::5432", fmt.Sprintf("postgres:%d", versao)).CombinedOutput()
 	if err != nil {
@@ -115,7 +115,8 @@ func TestMain(m *testing.M) {
 	cod := m.Run()
 	muPG.Lock()
 	for _, s := range servidor {
-		_ = exec.Command("docker", "rm", "-f", s.nome).Run()
+		// -v: a imagem do postgres declara VOLUME; um rm -f explícito passa na frente do --rm e o volume anônimo (GBs) fica órfão.
+		_ = exec.Command("docker", "rm", "-fv", s.nome).Run()
 	}
 	muPG.Unlock()
 	os.Exit(cod)
@@ -800,7 +801,7 @@ func TestCopiaPeloTunelSSH(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
 	o, d := subir(t, "o18", 18), subir(t, "d18", 18)
-	if err := tunel.GerarChave(a.d.Dir.ChaveSSH(), "copia-banco@teste"); err != nil {
+	if err := tunel.GerarChave(a.d.Dir.ChaveSSH(), "pghangar@teste"); err != nil {
 		t.Fatal(err)
 	}
 	pub, _ := tunel.ChavePublica(a.d.Dir.ChaveSSH())
@@ -813,7 +814,7 @@ func TestCopiaPeloTunelSSH(t *testing.T) {
 	srv.Permitido = fmt.Sprintf("127.0.0.1:%d", o.porta) // como o permitopen do authorized_keys
 
 	c := cadastro.Conexao{Nome: "prod", Tag: cadastro.TagProd, Acesso: cadastro.AcessoSSH, SSHHost: srv.Host, SSHPorta: srv.Porta,
-		SSHUsuario: "copia-banco", Host: "127.0.0.1", Porta: o.porta, Usuario: "postgres", ModoSenha: cadastro.SenhaPerguntar,
+		SSHUsuario: "pghangar", Host: "127.0.0.1", Porta: o.porta, Usuario: "postgres", ModoSenha: cadastro.SenhaPerguntar,
 		SSLMode: "prefer", BancoAdmin: "postgres"}
 	if err := a.cad.SalvarConexao(ctx, "", c); err != nil {
 		t.Fatal(err)

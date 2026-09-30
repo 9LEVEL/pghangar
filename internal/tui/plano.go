@@ -11,11 +11,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/9LEVEL/copia-banco/internal/conexao"
-	"github.com/9LEVEL/copia-banco/internal/execucao"
-	"github.com/9LEVEL/copia-banco/internal/motor"
-	"github.com/9LEVEL/copia-banco/internal/nomes"
-	"github.com/9LEVEL/copia-banco/internal/versoes"
+	"github.com/9LEVEL/pghangar/internal/conexao"
+	"github.com/9LEVEL/pghangar/internal/execucao"
+	"github.com/9LEVEL/pghangar/internal/motor"
+	"github.com/9LEVEL/pghangar/internal/nomes"
+	"github.com/9LEVEL/pghangar/internal/versoes"
 )
 
 // telaPlano é a confirmação da cópia: tudo o que vai acontecer, os bloqueios, os avisos, os

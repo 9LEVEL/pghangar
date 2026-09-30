@@ -29,7 +29,8 @@ func subir(t *testing.T, nome string, versao int) int {
 	if err != nil {
 		t.Fatalf("%v %s", err, out)
 	}
-	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", nome).Run() })
+	// -v: a imagem do postgres declara VOLUME; um rm -f explícito passa na frente do --rm e o volume anônimo (GBs) fica órfão.
+	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-fv", nome).Run() })
 	out, _ = exec.Command("docker", "port", nome, "5432/tcp").Output()
 	l := strings.Split(strings.TrimSpace(string(out)), "\n")[0]
 	if !strings.HasPrefix(l, "127.0.0.1:") {
@@ -68,9 +69,9 @@ func TestPalco(t *testing.T) {
 	if dir == "" || arq == "" {
 		t.Skip("defina PALCO_DIR e PALCO_ARQUIVO")
 	}
-	prod := subir(t, "copia-banco-palco-prod16", 16)
-	homolog := subir(t, "copia-banco-palco-homolog18", 18)
-	dev := subir(t, "copia-banco-palco-dev17", 17)
+	prod := subir(t, "pghangar-palco-prod16", 16)
+	homolog := subir(t, "pghangar-palco-homolog18", 18)
+	dev := subir(t, "pghangar-palco-dev17", 17)
 
 	exe(t, prod, "postgres", "CREATE DATABASE loja", "CREATE DATABASE financeiro")
 	exe(t, prod, "loja",

@@ -22,8 +22,8 @@ import (
 // Rotulo marca os containers da ferramenta, com o id da execução; RotuloInstancia, com a instância
 // (outra instalação no mesmo Docker tem os containers dela, que esta nunca para).
 const (
-	Rotulo          = "copia-banco.execucao"
-	RotuloInstancia = "copia-banco.instancia"
+	Rotulo          = "pghangar.execucao"
+	RotuloInstancia = "pghangar.instancia"
 )
 
 // Docker fala com o Docker pela linha de comando.

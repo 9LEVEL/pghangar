@@ -13,10 +13,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/9LEVEL/copia-banco/internal/cadastro"
-	"github.com/9LEVEL/copia-banco/internal/local"
-	"github.com/9LEVEL/copia-banco/internal/nomes"
-	"github.com/9LEVEL/copia-banco/internal/trava"
+	"github.com/9LEVEL/pghangar/internal/cadastro"
+	"github.com/9LEVEL/pghangar/internal/local"
+	"github.com/9LEVEL/pghangar/internal/nomes"
+	"github.com/9LEVEL/pghangar/internal/trava"
 )
 
 // TrocarDepois faz a troca de uma execução que parou em "aguardando", depois de o sysadmin decidir

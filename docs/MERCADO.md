@@ -5,7 +5,7 @@ verificado numa fonte. Estrelas e datas são as do dia da consulta.
 
 ## Resumo
 
-**Não achamos ferramenta que junte o que o copia-banco junta:**
+**Não achamos ferramenta que junte o que o pghangar junta:**
 - túnel SSH embutido com `known_hosts` estrito;
 - a versão certa do cliente por imagem travada;
 - a troca de nomes com desfazer num banco que já existe;
@@ -23,7 +23,7 @@ Cada parte existe isolada em algum lugar:
 | trava contra a produção | pgsync | só pela regra "o destino é localhost" |
 | TUI | Dolly | não copia por túnel, não troca nomes; pgtower não copia |
 
-**O nicho do copia-banco:** o refresh lógico, feito no lugar, de um banco específico num servidor
+**O nicho do pghangar:** o refresh lógico, feito no lugar, de um banco específico num servidor
 de homologação que já existe, on-premise, com a produção atrás de SSH. Sem Kubernetes, sem ZFS e
 sem nuvem.
 
@@ -84,7 +84,7 @@ Os que ficam de pé são os que usam o `pg_dump`/`pg_restore` oficiais ou o stor
 | **Jailer · pg_sample** | subset com integridade referencial | Apache-2.0 (Java, ativo) · Artistic (Perl) | — |
 | **Synthesized · DATAMIMIC · DBSnapper** | geração e mascaramento | comerciais ou com edição community | — |
 
-## Ideias para o copia-banco
+## Ideias para o pghangar
 
 A origem de cada uma está entre parênteses.
 
@@ -93,7 +93,7 @@ A origem de cada uma está entre parênteses.
 2. **Mais checagens no plano** (pgclone): espaço em disco no destino (dá para medir quando ele é
    local), roles referenciadas que faltam (as políticas de RLS, por exemplo) e a lista de objetos
    que vão ser copiados.
-3. **Refresh agendado** (DBLab): `copia-banco rodar <perfil>` num timer do systemd, já previsto
+3. **Refresh agendado** (DBLab): `pghangar rodar <perfil>` num timer do systemd, já previsto
    para a fase 2.
 4. **Dump retomável** (Dolly, pgcopydb `--resume`, pg_dbmigrator): fase 3 (`docs/ESTRATEGIA.md`
    §16).

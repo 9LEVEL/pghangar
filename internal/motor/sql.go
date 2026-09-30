@@ -9,7 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/9LEVEL/copia-banco/internal/cadastro"
+	"github.com/9LEVEL/pghangar/internal/cadastro"
 )
 
 // id aspeia um identificador; lit aspeia um literal. Os dois seguem as regras do PostgreSQL com

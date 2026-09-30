@@ -1,4 +1,4 @@
-// Package local cuida do diretório da ferramenta (docs/ESTRATEGIA.md §13): /var/lib/copia-banco,
+// Package local cuida do diretório da ferramenta (docs/ESTRATEGIA.md §13): /var/lib/pghangar,
 // ou o que --dir disser. Tudo fica dentro dele, e a ferramenta se recusa a abrir com permissões
 // frouxas, como o OpenSSH: ali estão senhas de superusuário e dados de produção.
 package local
@@ -13,7 +13,7 @@ import (
 )
 
 // Padrao é o diretório quando --dir não é informado.
-const Padrao = "/var/lib/copia-banco"
+const Padrao = "/var/lib/pghangar"
 
 type Dir struct{ Raiz string }
 
@@ -81,7 +81,7 @@ func Conferir(p string) error {
 // ExigirRoot recusa rodar sem root: a ferramenta é de sysadmin (docs/DECISOES.md).
 func ExigirRoot() error {
 	if os.Geteuid() != 0 {
-		return errors.New("o copia-banco roda como root (é uma ferramenta de sysadmin): use sudo")
+		return errors.New("o pghangar roda como root (é uma ferramenta de sysadmin): use sudo")
 	}
 	return nil
 }

@@ -5,13 +5,13 @@ import (
 	"io"
 	"os"
 
-	"github.com/9LEVEL/copia-banco/internal/cadastro"
-	"github.com/9LEVEL/copia-banco/internal/conexao"
-	"github.com/9LEVEL/copia-banco/internal/execucao"
-	"github.com/9LEVEL/copia-banco/internal/imagens"
-	"github.com/9LEVEL/copia-banco/internal/local"
-	"github.com/9LEVEL/copia-banco/internal/motor"
-	"github.com/9LEVEL/copia-banco/internal/tunel"
+	"github.com/9LEVEL/pghangar/internal/cadastro"
+	"github.com/9LEVEL/pghangar/internal/conexao"
+	"github.com/9LEVEL/pghangar/internal/execucao"
+	"github.com/9LEVEL/pghangar/internal/imagens"
+	"github.com/9LEVEL/pghangar/internal/local"
+	"github.com/9LEVEL/pghangar/internal/motor"
+	"github.com/9LEVEL/pghangar/internal/tunel"
 )
 
 // Docker é o que a tela usa do Docker (a aba Ambiente).
@@ -85,7 +85,7 @@ func ServicosReais(cad *cadastro.Cadastro, d local.Dir, l execucao.Lancador, dep
 		Cancelar:     execucao.Cancelar,
 		Conferir:     func(ctx context.Context) error { return execucao.Conferir(ctx, cad, d) },
 		AceitarHost:  func(hd *tunel.HostDesconhecido) error { return tunel.Aceitar(d.KnownHosts(), hd) },
-		GerarChave:   func() error { return tunel.GerarChave(d.ChaveSSH(), "copia-banco@"+host) },
+		GerarChave:   func() error { return tunel.GerarChave(d.ChaveSSH(), "pghangar@"+host) },
 		LerLog:       func(id int64) string { return lerFim(d.Log(id), 512*1024) },
 	}
 }

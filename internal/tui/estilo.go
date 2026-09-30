@@ -10,7 +10,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/9LEVEL/copia-banco/internal/cadastro"
+	"github.com/9LEVEL/pghangar/internal/cadastro"
 )
 
 // Paleta adaptável (terminal claro e escuro), a mesma do pgtower.

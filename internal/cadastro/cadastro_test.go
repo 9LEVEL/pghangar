@@ -120,7 +120,7 @@ func TestValidarConexaoTunel(t *testing.T) {
 	if err := x.Validar(); err == nil {
 		t.Fatal("túnel sem host SSH")
 	}
-	x.SSHHost, x.SSHPorta, x.SSHUsuario = "prod.exemplo", 22, "copia-banco"
+	x.SSHHost, x.SSHPorta, x.SSHUsuario = "prod.exemplo", 22, "pghangar"
 	if err := x.Validar(); err != nil {
 		t.Fatal(err)
 	}

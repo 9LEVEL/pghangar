@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/9LEVEL/copia-banco/internal/cadastro"
-	"github.com/9LEVEL/copia-banco/internal/versoes"
+	"github.com/9LEVEL/pghangar/internal/cadastro"
+	"github.com/9LEVEL/pghangar/internal/versoes"
 )
 
 func TestSQLCriarBancoPorProvedorEVersao(t *testing.T) {

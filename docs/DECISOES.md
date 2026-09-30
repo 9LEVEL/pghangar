@@ -145,10 +145,10 @@ para o destino.
 
 **Decidido pelo assistente,** na implementação. **Substitui** o método da entrada anterior.
 
-**Decidido:** a cópia cria `copia_banco_<instância>_<execução>`, `SUPERUSER NOLOGIN`, restaura com
-`--role` dela, roda o script pós-restore com ela, e no fim faz `REASSIGN OWNED` para o dono do
-destino, `DROP OWNED` e `DROP ROLE`. Event triggers ficam com o usuário da conexão quando o dono
-não é superusuário.
+**Decidido:** a cópia cria `pghangar_<instância>_<execução>` (antes do nome novo, `copia_banco_…`),
+`SUPERUSER NOLOGIN`, restaura com `--role` dela, roda o script pós-restore com ela, e no fim faz
+`REASSIGN OWNED` para o dono do destino, `DROP OWNED` e `DROP ROLE`. Event triggers ficam com o
+usuário da conexão quando o dono não é superusuário.
 
 **Por quê:** restaurar direto como o dono (não superusuário) falharia em extensões não confiáveis,
 event triggers e outros objetos restritos; criar as extensões antes exigiria prever os schemas
@@ -232,7 +232,7 @@ implementação.
 - a fase 3 ganha um dump retomável para link instável, inspirado no `internal/dump` do Dolly
   (github.com/VicenteOlmos/dolly, MIT). O esboço e os trade-offs estão em `docs/ESTRATEGIA.md` §16;
 - o nome do produto continua "copia-banco" até o produto amadurecer. **pgdolly** saiu da lista, porque
-  o Dolly já existe.
+  o Dolly já existe. **O nome foi SUBSTITUÍDO** pela entrada "O nome: pghangar", no fim.
 
 **Por quê:** a revisão do Dolly mostrou que ele não cobre o túnel SSH, as várias versões por container,
 a troca com desfazer e a proteção da produção. Mas a retomada dele resolve um risco real do nosso caso:
@@ -372,12 +372,12 @@ fechar e reabrir sem afetá-la.
 **Por quê:** a TUI é aberta por SSH no servidor de desenvolvimento. Uma queda dessa conexão não
 pode matar uma cópia de 40 minutos.
 
-## 2026-09-29: Tudo sob `/var/lib/copia-banco`
+## 2026-09-29: Tudo sob `/var/lib/pghangar` (era `/var/lib/copia-banco`)
 
 **Decidido pelo assistente.** Na análise, a configuração ia para `/etc/copia-banco`.
 
 **Decidido:** o cadastro, as chaves, o `known_hosts`, os dumps e os logs ficam sob
-`/var/lib/copia-banco`, e a opção `--dir` troca o diretório. A ferramenta exige root e recusa
+`/var/lib/pghangar`, e a opção `--dir` troca o diretório. A ferramenta exige root e recusa
 permissões frouxas.
 
 **Por quê:** a configuração fica toda no SQLite, e o `/etc` não teria o que guardar.
@@ -387,3 +387,23 @@ permissões frouxas.
 **Decisão do usuário.**
 
 **Decidido:** a cópia leva os dados como estão.
+
+## 2026-09-29: O nome: pghangar
+
+**Decisão do usuário,** entre as opções do assistente.
+
+**Decidido:** a ferramenta passa a se chamar **pghangar**: o binário, o módulo Go
+(`github.com/9LEVEL/pghangar`), os diretórios (`/opt/pghangar`, `/var/lib/pghangar`), a role
+temporária (`pghangar_…`), os containers e labels (`pghangar-…`, `pghangar.execucao`), o
+`application_name` e o repositório. As entradas acima que citam só o caminho ou o prefixo foram
+atualizadas; as que registram o nome da época ficam como estavam.
+
+**Por quê:** o hangar é onde o avião fica guardado e é preparado para voar, e a ferramenta faz isso
+com o banco: guarda dumps, anteriores e o banco base, e prepara as cópias. Faz par com o pgtower (a
+torre fica ao lado do hangar), e a palavra é a mesma em português e em inglês. Os outros nomes
+caíram: **pgferry** já é um projeto ativo de migração para Postgres, **pgshuttle** é uma "resumable
+PostgreSQL database copy" (a mesma proposta) e **pgdolly** confundiria com o Dolly.
+
+**A instalação que já existia:** o cadastro de `/var/lib/copia-banco` foi copiado para
+`/var/lib/pghangar`, sem apagar o antigo. Uma conexão guarda o usuário SSH dela, então o usuário
+`copia-banco` já criado num servidor continua valendo; o nome novo é só a sugestão do formulário.

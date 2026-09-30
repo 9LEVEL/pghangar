@@ -17,9 +17,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/9LEVEL/copia-banco/internal/cadastro"
-	"github.com/9LEVEL/copia-banco/internal/conexao"
-	"github.com/9LEVEL/copia-banco/internal/versoes"
+	"github.com/9LEVEL/pghangar/internal/cadastro"
+	"github.com/9LEVEL/pghangar/internal/conexao"
+	"github.com/9LEVEL/pghangar/internal/versoes"
 )
 
 // O modo "link instável" (docs/ESTRATEGIA.md §16, inspirado no Dolly): o esquema sai pelo pg_dump
@@ -307,7 +307,7 @@ func (r *corrida) dumpBlocosUmaVez(ctx context.Context, estado *EstadoBlocos, re
 		return &falhaRede{errors.New("a origem não está aberta")}
 	}
 	// 1. O esquema (sempre de novo: é pequeno, e a estrutura pode ter mudado).
-	app := fmt.Sprintf("copia-banco/%s/%s", r.d.Maquina, p.Perfil.Nome)
+	app := fmt.Sprintf("pghangar/%s/%s", r.d.Maquina, p.Perfil.Nome)
 	args := []string{"--schema-only", "--format=custom", "--verbose", "--file=" + dentroTrabalho + "/esquema.dump"}
 	for _, x := range p.Perfil.Schemas {
 		args = append(args, "--schema="+x)
@@ -609,7 +609,7 @@ func (r *corrida) restoreBlocos(ctx context.Context) (int, error) {
 	secao := func(nome string, jobs int) error {
 		args := []string{fmt.Sprintf("--jobs=%d", jobs), "--verbose", "--no-owner", "--no-privileges", "--no-tablespaces",
 			"--no-subscriptions", "--no-publications", "--role=" + r.role, "--section=" + nome,
-			"--dbname=" + conexaoDSN(r.destino, r.e.BancoNovo, "copia-banco"), dentroTrabalho + "/esquema.dump"}
+			"--dbname=" + conexaoDSN(r.destino, r.e.BancoNovo, "pghangar"), dentroTrabalho + "/esquema.dump"}
 		if err := versoes.Conferir("pg_restore", args, r.p.Imagem); err != nil {
 			return err
 		}

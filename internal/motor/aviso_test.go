@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/9LEVEL/copia-banco/internal/cadastro"
+	"github.com/9LEVEL/pghangar/internal/cadastro"
 )
 
 func TestAvisar(t *testing.T) {

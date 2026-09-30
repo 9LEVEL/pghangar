@@ -1,6 +1,6 @@
 # artefatos
 /bin/
-/copia-banco
+/pghangar
 
 # segredos e dados: nunca versionar
 *.pgpass

@@ -12,12 +12,12 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/9LEVEL/copia-banco/internal/cadastro"
-	"github.com/9LEVEL/copia-banco/internal/conexao"
-	"github.com/9LEVEL/copia-banco/internal/imagens"
-	"github.com/9LEVEL/copia-banco/internal/motor"
-	"github.com/9LEVEL/copia-banco/internal/tunel"
-	"github.com/9LEVEL/copia-banco/internal/versoes"
+	"github.com/9LEVEL/pghangar/internal/cadastro"
+	"github.com/9LEVEL/pghangar/internal/conexao"
+	"github.com/9LEVEL/pghangar/internal/imagens"
+	"github.com/9LEVEL/pghangar/internal/motor"
+	"github.com/9LEVEL/pghangar/internal/tunel"
+	"github.com/9LEVEL/pghangar/internal/versoes"
 )
 
 // abaAmbiente: o Docker, as imagens, a chave SSH da ferramenta e o diretório.
@@ -132,7 +132,7 @@ func (a *abaAmbiente) tecla(m *Model, k tea.KeyMsg) tea.Cmd {
 			rotulo: "mandando um aviso de teste ao webhook",
 			rodar: func(ctx context.Context, _ conexao.Segredos) (any, error) {
 				maq, _ := os.Hostname()
-				e := cadastro.Execucao{Perfil: "teste", Estado: cadastro.EstadoOK, Mensagem: "aviso de teste do copia-banco", Inicio: time.Now(), Fim: time.Now()}
+				e := cadastro.Execucao{Perfil: "teste", Estado: cadastro.EstadoOK, Mensagem: "aviso de teste do pghangar", Inicio: time.Now(), Fim: time.Now()}
 				return nil, motor.Avisar(ctx, url, motor.NovoAviso(e, maq))
 			},
 			pronto: func(m *Model, _ any, err error) tea.Cmd {

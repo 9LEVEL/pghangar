@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/9LEVEL/copia-banco/internal/cadastro"
+	"github.com/9LEVEL/pghangar/internal/cadastro"
 )
 
 // Aviso é o que o webhook recebe no fim de uma execução. O campo text é o que Slack, Mattermost e
@@ -39,7 +39,7 @@ var simbolo = map[string]string{
 func NovoAviso(e cadastro.Execucao, maquina string) Aviso {
 	dur := e.Fim.Sub(e.Inicio)
 	return Aviso{
-		Text: fmt.Sprintf("%s copia-banco em %s: #%d %s → %s/%s: %s — %s (%s)", simbolo[e.Estado], maquina, e.ID, e.Perfil,
+		Text: fmt.Sprintf("%s pghangar em %s: #%d %s → %s/%s: %s — %s (%s)", simbolo[e.Estado], maquina, e.ID, e.Perfil,
 			e.Destino, e.Banco, e.Estado, e.Mensagem, dur.Round(time.Second)),
 		Execucao: e.ID, Tipo: e.Tipo, Perfil: e.Perfil, Estado: e.Estado, Mensagem: e.Mensagem, Destino: e.Destino, Banco: e.Banco,
 		Inicio: e.Inicio, Fim: e.Fim, DuracaoS: int64(dur.Seconds()), Maquina: maquina, Operador: e.Operador,
@@ -63,7 +63,7 @@ func Avisar(ctx context.Context, url string, a Aviso) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "copia-banco")
+	req.Header.Set("User-Agent", "pghangar")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		// O erro do net/http leva a URL, que costuma ser um segredo (a do Slack é): fica de fora.
