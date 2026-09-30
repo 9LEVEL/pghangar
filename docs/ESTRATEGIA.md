@@ -77,6 +77,9 @@ o túnel é obrigatório e faz parte da fase 1.
   - escuta num **socket unix**, num diretório `700` só do root (`tmp/tunel-*`), e não numa porta
     de `127.0.0.1`, que qualquer usuário do servidor de desenvolvimento alcançaria. O container
     monta esse diretório;
+  - **o TLS com o banco é do túnel.** No socket, o libpq ignora o `sslmode`, e o SSH só cifra até
+    o servidor SSH. Quando o `sslmode` pede, o túnel negocia o TLS com o banco pelo canal SSH, e
+    confere o certificado no `verify-ca` e no `verify-full`. O cliente fala em claro com o socket;
   - **o destino do túnel é o banco visto a partir do servidor SSH:** `127.0.0.1:5432` quando o
     banco está no mesmo host, ou `db-interno:5432` quando o SSH entra num host e o banco fica em
     outro atrás dele;

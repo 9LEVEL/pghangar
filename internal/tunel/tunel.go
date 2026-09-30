@@ -1,6 +1,10 @@
-// Package tunel abre o túnel SSH até o banco (docs/ESTRATEGIA.md §4): uma conexão SSH, uma porta
-// local efêmera em 127.0.0.1 e, para cada conexão aceita nela, um canal até o banco visto a partir
-// do servidor SSH. O container, com --network host, conecta nessa porta.
+// Package tunel abre o túnel SSH até o banco (docs/ESTRATEGIA.md §4): uma conexão SSH, um socket
+// unix local e, para cada conexão aceita nele, um canal até o banco visto a partir do servidor SSH.
+// O container monta o diretório do socket.
+//
+// O TLS com o banco é do túnel: no socket unix, o libpq e o pgx ignoram o sslmode, e o canal SSH
+// só cifra até o servidor SSH. Quando o sslmode pede, o túnel negocia o TLS com o banco pelo canal
+// e só então repassa o que o cliente mandou.
 //
 // O known_hosts é o da ferramenta e é estrito: um host desconhecido volta como *HostDesconhecido,
 // com o fingerprint, para a tela perguntar; uma chave diferente da registrada bloqueia.
@@ -11,7 +15,9 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -46,6 +52,12 @@ type Config struct {
 	// só o root chega nele. Sem ele, o túnel escuta numa porta TCP de 127.0.0.1, que qualquer
 	// usuário local alcança (só os testes usam assim).
 	Socket string
+	// SSLMode é o sslmode da conexão, cumprido pelo túnel: prefer e require cifram sem conferir o
+	// certificado, verify-ca confere a CA e verify-full confere também o nome do host do Destino.
+	// Vazio ou disable repassa os bytes como vierem.
+	SSLMode string
+	// RaizesTLS são as CAs do verify-ca e do verify-full. Nil são as do sistema.
+	RaizesTLS *x509.CertPool
 }
 
 func (c Config) endereco() string { return net.JoinHostPort(c.Host, strconv.Itoa(c.Porta)) }
@@ -99,6 +111,9 @@ type Tunel struct {
 	cliente  *ssh.Client
 	ouvinte  net.Listener
 	destino  string
+	sslmode  string
+	tls      *tls.Config // nil sem TLS
+	prazo    time.Duration
 	fechado  chan struct{}
 	fecharUm sync.Once
 	mu       sync.Mutex
@@ -213,6 +228,13 @@ func Abrir(ctx context.Context, c Config) (*Tunel, error) {
 	if c.Keepalive <= 0 {
 		c.Keepalive = 30 * time.Second
 	}
+	if c.Prazo <= 0 {
+		c.Prazo = 10 * time.Second
+	}
+	cfgTLS, err := configTLS(c.SSLMode, c.Destino, c.RaizesTLS)
+	if err != nil {
+		return nil, err
+	}
 	cliente, err := Conectar(ctx, c)
 	if err != nil {
 		return nil, err
@@ -240,7 +262,8 @@ func Abrir(ctx context.Context, c Config) (*Tunel, error) {
 		_ = cliente.Close()
 		return nil, err
 	}
-	t := &Tunel{cliente: cliente, ouvinte: ouvinte, destino: c.Destino, fechado: make(chan struct{})}
+	t := &Tunel{cliente: cliente, ouvinte: ouvinte, destino: c.Destino, sslmode: c.SSLMode, tls: cfgTLS, prazo: c.Prazo,
+		fechado: make(chan struct{})}
 	go t.aceitar()
 	go t.manter(c.Keepalive)
 	go func() {
@@ -292,14 +315,14 @@ func (t *Tunel) aceitar() {
 		go func() {
 			defer t.conexoes.Done()
 			defer local.Close()
-			remoto, err := t.cliente.Dial("tcp", t.destino)
+			remoto, err := t.ligar(local)
 			if err != nil {
 				return
 			}
 			defer remoto.Close()
 			fim := make(chan struct{}, 2)
 			go func() { _, _ = io.Copy(remoto, local); fim <- struct{}{} }()
-			go func() { _, _ = io.Copy(local, remoto); fim <- struct{}{} }()
+			go func() { _ = devolver(local, remoto); fim <- struct{}{} }()
 			select {
 			case <-fim:
 			case <-t.fechado:
@@ -342,6 +365,255 @@ func (t *Tunel) manter(intervalo time.Duration) {
 			}
 		}
 	}
+}
+
+// --- TLS com o banco --------------------------------------------------------------------------
+
+// CodigoTLS é o SQLSTATE do erro que o túnel responde ao cliente quando não consegue o TLS que o
+// sslmode pede (08001: não foi possível estabelecer a conexão).
+const CodigoTLS = "08001"
+
+const (
+	codigoSSLRequest    = 80877103
+	codigoGSSENCRequest = 80877104
+	maxPacoteInicial    = 10000 // o MAX_STARTUP_PACKET_LENGTH do servidor
+)
+
+// configTLS monta o TLS do sslmode. Nil é sem TLS.
+func configTLS(sslmode, destino string, raizes *x509.CertPool) (*tls.Config, error) {
+	if sslmode == "" || sslmode == "disable" {
+		return nil, nil
+	}
+	host, _, err := net.SplitHostPort(destino)
+	if err != nil {
+		return nil, fmt.Errorf("destino do túnel %q: %w", destino, err)
+	}
+	cfg := &tls.Config{ServerName: host, RootCAs: raizes, MinVersion: tls.VersionTLS12, NextProtos: []string{"postgresql"}}
+	switch sslmode {
+	case "prefer", "require":
+		// Como o libpq: cifra, sem conferir o certificado.
+		cfg.InsecureSkipVerify = true
+	case "verify-ca":
+		// Confere a cadeia, e não o nome: o crypto/tls não tem esse meio-termo pronto.
+		cfg.InsecureSkipVerify = true
+		cfg.VerifyPeerCertificate = func(brutos [][]byte, _ [][]*x509.Certificate) error {
+			return conferirCA(brutos, raizes)
+		}
+	case "verify-full":
+	default:
+		return nil, fmt.Errorf("sslmode desconhecido: %q", sslmode)
+	}
+	return cfg, nil
+}
+
+func conferirCA(brutos [][]byte, raizes *x509.CertPool) error {
+	if len(brutos) == 0 {
+		return errors.New("o servidor não mandou certificado")
+	}
+	certs := make([]*x509.Certificate, len(brutos))
+	for i, b := range brutos {
+		c, err := x509.ParseCertificate(b)
+		if err != nil {
+			return err
+		}
+		certs[i] = c
+	}
+	inter := x509.NewCertPool()
+	for _, c := range certs[1:] {
+		inter.AddCert(c)
+	}
+	_, err := certs[0].Verify(x509.VerifyOptions{Roots: raizes, Intermediates: inter})
+	return err
+}
+
+// ligar abre o canal até o banco para uma conexão do cliente. Com TLS, lê antes o pacote inicial do
+// cliente (ele fala primeiro), negocia o TLS com o banco e só então repassa o pacote. Se o TLS que o
+// sslmode pede não sai, o cliente recebe um erro do protocolo com o motivo, e não só uma conexão
+// fechada.
+func (t *Tunel) ligar(local net.Conn) (net.Conn, error) {
+	if t.tls == nil {
+		return t.cliente.Dial("tcp", t.destino)
+	}
+	inicial, err := lerInicial(local, t.prazo)
+	if err != nil {
+		return nil, err
+	}
+	remoto, err := t.cliente.Dial("tcp", t.destino)
+	if err != nil {
+		return nil, err
+	}
+	seguro, err := t.negociar(remoto)
+	if err != nil {
+		if t.sslmode != "prefer" {
+			responderErro(local, fmt.Sprintf("o túnel não conseguiu TLS com o banco %s (sslmode %s): %v", t.destino, t.sslmode, err))
+			return nil, err
+		}
+		// Como o libpq no prefer: se o TLS falha, tenta de novo sem ele.
+		if seguro, err = t.cliente.Dial("tcp", t.destino); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := seguro.Write(inicial); err != nil {
+		_ = seguro.Close()
+		return nil, err
+	}
+	return seguro, nil
+}
+
+// negociar pede o TLS ao banco, como o libpq: o SSLRequest, a resposta de um byte e o handshake.
+// Devolve o canal em claro quando o banco não tem TLS e o sslmode é prefer. Fecha o canal na falha.
+func (t *Tunel) negociar(remoto net.Conn) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), t.prazo)
+	defer cancel()
+	// O canal SSH não aceita prazo: vencido o prazo, ele é fechado.
+	parar := context.AfterFunc(ctx, func() { _ = remoto.Close() })
+	conn, err := pedirTLS(ctx, remoto, t.tls, t.sslmode)
+	if !parar() {
+		err = errors.New("o banco não respondeu a tempo ao pedido de TLS")
+	}
+	if err != nil {
+		_ = remoto.Close()
+		return nil, err
+	}
+	return conn, nil
+}
+
+func pedirTLS(ctx context.Context, remoto net.Conn, cfg *tls.Config, sslmode string) (net.Conn, error) {
+	pedido := binary.BigEndian.AppendUint32(binary.BigEndian.AppendUint32(nil, 8), codigoSSLRequest)
+	if _, err := remoto.Write(pedido); err != nil {
+		return nil, err
+	}
+	// Um byte só, lido direto do canal: nada que o servidor mande antes do handshake fica num buffer
+	// para ser lido depois como se tivesse vindo cifrado.
+	resp := make([]byte, 1)
+	if _, err := io.ReadFull(remoto, resp); err != nil {
+		return nil, fmt.Errorf("lendo a resposta ao pedido de TLS: %w", err)
+	}
+	switch resp[0] {
+	case 'S':
+		c := tls.Client(remoto, cfg)
+		if err := c.HandshakeContext(ctx); err != nil {
+			return nil, fmt.Errorf("handshake TLS: %w", err)
+		}
+		return c, nil
+	case 'N':
+		if sslmode == "prefer" {
+			return remoto, nil
+		}
+		return nil, errors.New("o servidor não aceita TLS")
+	}
+	return nil, fmt.Errorf("resposta inesperada ao pedido de TLS: %q", resp[0])
+}
+
+// lerInicial lê o primeiro pacote do cliente: o startup ou um CancelRequest. Um pedido de TLS ou
+// de GSSAPI do cliente recebe "não", porque a cifra é do túnel.
+func lerInicial(local net.Conn, prazo time.Duration) ([]byte, error) {
+	_ = local.SetReadDeadline(time.Now().Add(prazo))
+	defer func() { _ = local.SetReadDeadline(time.Time{}) }()
+	for range 3 {
+		cab := make([]byte, 8)
+		if _, err := io.ReadFull(local, cab); err != nil {
+			return nil, err
+		}
+		n, codigo := binary.BigEndian.Uint32(cab[0:4]), binary.BigEndian.Uint32(cab[4:8])
+		if n == 8 && (codigo == codigoSSLRequest || codigo == codigoGSSENCRequest) {
+			if _, err := local.Write([]byte{'N'}); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if n < 8 || n > maxPacoteInicial {
+			return nil, fmt.Errorf("pacote inicial inválido (%d bytes)", n)
+		}
+		pacote := make([]byte, n)
+		copy(pacote, cab)
+		if _, err := io.ReadFull(local, pacote[8:]); err != nil {
+			return nil, err
+		}
+		return pacote, nil
+	}
+	return nil, errors.New("o cliente insistiu em pedir cifra ao túnel")
+}
+
+// devolver copia para o cliente o que vem do banco. Com o TLS no túnel, filtra antes a
+// autenticação (semChannelBinding).
+func devolver(local io.Writer, remoto net.Conn) error {
+	if _, ok := remoto.(*tls.Conn); ok {
+		return semChannelBinding(local, remoto)
+	}
+	_, err := io.Copy(local, remoto)
+	return err
+}
+
+// maxMensagemInicio limita as mensagens do banco que o túnel lê inteiras, até o fim da
+// autenticação. Nessa fase, elas são pequenas.
+const maxMensagemInicio = 1 << 20
+
+// semChannelBinding repassa as mensagens do banco até o fim da autenticação, tirando o
+// SCRAM-SHA-256-PLUS da lista de mecanismos. Com TLS, o banco oferece o SCRAM com channel binding,
+// que amarra a autenticação ao TLS do cliente. Aqui o TLS termina no túnel, e o cliente fala em
+// claro com o socket: o libpq recusa a oferta ("server offered SCRAM-SHA-256-PLUS authentication
+// over a non-SSL connection"). Sem o PLUS, ele autentica com o SCRAM-SHA-256. Depois da autenticação
+// (ou de um erro), é cópia direta.
+func semChannelBinding(local io.Writer, remoto io.Reader) error {
+	br := bufio.NewReader(remoto)
+	for {
+		cab := make([]byte, 5)
+		if _, err := io.ReadFull(br, cab); err != nil {
+			return err
+		}
+		n := binary.BigEndian.Uint32(cab[1:5])
+		if n < 4 || n > maxMensagemInicio {
+			return fmt.Errorf("mensagem do banco inválida na autenticação (%q, %d bytes)", cab[0], n)
+		}
+		corpo := make([]byte, n-4)
+		if _, err := io.ReadFull(br, corpo); err != nil {
+			return err
+		}
+		autenticacao := -1
+		if cab[0] == 'R' && len(corpo) >= 4 {
+			autenticacao = int(binary.BigEndian.Uint32(corpo[:4]))
+		}
+		if autenticacao == 10 { // AuthenticationSASL: a lista de mecanismos
+			corpo = semPlus(corpo)
+			binary.BigEndian.PutUint32(cab[1:5], uint32(4+len(corpo)))
+		}
+		if _, err := local.Write(append(cab, corpo...)); err != nil {
+			return err
+		}
+		if cab[0] == 'E' || autenticacao == 0 { // o erro ou o AuthenticationOk
+			break
+		}
+	}
+	_, err := io.Copy(local, br)
+	return err
+}
+
+// semPlus tira o SCRAM-SHA-256-PLUS da AuthenticationSASL: o código 10 e os nomes, cada um com o
+// seu zero, e um zero no fim.
+func semPlus(corpo []byte) []byte {
+	novo := append([]byte(nil), corpo[:4]...)
+	for _, m := range strings.Split(string(corpo[4:]), "\x00") {
+		if m != "" && m != "SCRAM-SHA-256-PLUS" {
+			novo = append(append(novo, m...), 0)
+		}
+	}
+	return append(novo, 0)
+}
+
+// responderErro manda ao cliente um ErrorResponse FATAL, como o servidor faria: o pg_dump e o pgx
+// mostram a mensagem.
+func responderErro(local net.Conn, msg string) {
+	var corpo []byte
+	for _, c := range [][2]string{{"S", "FATAL"}, {"V", "FATAL"}, {"C", CodigoTLS}, {"M", msg}} {
+		corpo = append(corpo, c[0]...)
+		corpo = append(corpo, c[1]...)
+		corpo = append(corpo, 0)
+	}
+	corpo = append(corpo, 0)
+	pacote := binary.BigEndian.AppendUint32([]byte{'E'}, uint32(4+len(corpo)))
+	_ = local.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	_, _ = local.Write(append(pacote, corpo...))
 }
 
 // --- chaves -----------------------------------------------------------------------------------

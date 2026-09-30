@@ -408,3 +408,36 @@ PostgreSQL database copy" (a mesma proposta) e **pgdolly** confundiria com o Dol
 **A instalação que já existia:** o cadastro de `/var/lib/copia-banco` foi copiado para
 `/var/lib/pghangar`, sem apagar o antigo. Uma conexão guarda o usuário SSH dela, então o usuário
 `copia-banco` já criado num servidor continua valendo; o nome novo é só a sugestão do formulário.
+
+## 2026-09-30: O túnel negocia o TLS com o banco
+
+**Recomendação aceita pelo usuário.**
+
+**Decidido:**
+- quando o `sslmode` pede TLS, **o túnel negocia o TLS com o banco** pelo canal SSH (o
+  `SSLRequest` e o handshake) e só então repassa o que o cliente mandou. O cliente (o `pg_dump` no
+  container, o pgx do diagnóstico) fala em claro com o socket, e a DSN pelo túnel leva
+  `sslmode=disable`;
+- `prefer` e `require` cifram sem conferir o certificado. `verify-ca` e `verify-full` conferem
+  pelas CAs do sistema, e o `verify-full` confere o nome contra o host do banco cadastrado. O
+  `verify-full` pelo túnel, antes recusado, passa a valer;
+- quando o TLS que o `sslmode` pede não sai, o túnel responde ao cliente com um erro `FATAL`
+  (`08001`) que diz o motivo, e o diagnóstico para na camada **TLS**. Quando chega ao fim, o
+  diagnóstico diz se a sessão está com TLS;
+- o túnel tira o `SCRAM-SHA-256-PLUS` da lista de mecanismos que o banco oferece, e o cliente
+  autentica com o `SCRAM-SHA-256`.
+
+**Por quê:** a premissa anterior, "o SSH já cifra o caminho", estava errada. Ela não estava
+registrada aqui, só no código e na ajuda do formulário. O SSH cifra só até o servidor SSH, e dali
+até o banco a conexão segue pela rede interna. No socket unix, o libpq e o pgx ignoram o
+`sslmode`: o `require` da conexão não fazia nada, e a cópia ia em claro entre o servidor SSH e o
+banco. Um `pg_hba` só com `hostssl` recusava a conexão ("no pg_hba.conf entry … no encryption"), e
+foi assim que o problema apareceu, na primeira conexão real. Voltar a uma porta TCP, para o
+próprio cliente negociar o TLS, reabriria o túnel a qualquer usuário local (a decisão do socket
+unix, acima).
+
+**O channel binding:** com TLS, o banco oferece o `SCRAM-SHA-256-PLUS`, que amarra a autenticação
+ao TLS do cliente. Como o TLS termina no túnel, o libpq, que fala em claro, recusa a oferta ("server
+offered SCRAM-SHA-256-PLUS authentication over a non-SSL connection"). Sem o PLUS, perde-se só essa
+amarração, que protege contra um intermediário no TLS. Aqui, o intermediário é o próprio túnel, e o
+trecho do cliente até ele é o socket só do root.

@@ -124,9 +124,10 @@ func TestValidarConexaoTunel(t *testing.T) {
 	if err := x.Validar(); err != nil {
 		t.Fatal(err)
 	}
+	// O TLS pelo túnel é do próprio túnel, que confere o certificado contra o host real do banco.
 	x.SSLMode = "verify-full"
-	if err := x.Validar(); err == nil {
-		t.Fatal("verify-full pelo túnel deveria ser recusado")
+	if err := x.Validar(); err != nil {
+		t.Fatalf("verify-full pelo túnel: %v", err)
 	}
 	x.SSLMode, x.Host = "require", "/var/run/postgresql"
 	if err := x.Validar(); err == nil {

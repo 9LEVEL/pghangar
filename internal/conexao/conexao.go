@@ -138,6 +138,7 @@ func ConfigTunel(c cadastro.Conexao, a Ambiente, s Segredos) tunel.Config {
 	cfg := tunel.Config{
 		Host: c.SSHHost, Porta: c.SSHPorta, Usuario: c.SSHUsuario, Chave: chave, Frase: s.Frases[chave],
 		KnownHosts: a.KnownHosts, Destino: net.JoinHostPort(c.Host, strconv.Itoa(c.Porta)), Prazo: a.prazo(),
+		SSLMode: c.SSLMode,
 	}
 	if c.SaltoHost != "" {
 		cfg.Salto = &tunel.Salto{Host: c.SaltoHost, Porta: c.SaltoPorta, Usuario: c.SaltoUsuario}
@@ -189,11 +190,18 @@ func abrirTunel(ctx context.Context, c cadastro.Conexao, a Ambiente, s Segredos)
 
 // DSN escreve a conexão no formato de palavras-chave do libpq, SEM senha: é o que vai na linha de
 // comando do container. A senha vai pelo pgpass montado.
+//
+// Pelo túnel, o sslmode é disable: quem negocia o TLS com o banco é o túnel, e o cliente fala em
+// claro com ele, num socket só do root. No socket, o libpq e o pgx ignorariam o sslmode de todo jeito.
 func DSN(c cadastro.Conexao, p *Ponte, banco, aplicacao string) string {
 	par := func(k, v string) string { return k + "=" + valorDSN(v) }
+	sslmode := c.SSLMode
+	if p.Tunel != nil {
+		sslmode = "disable"
+	}
 	partes := []string{
 		par("host", p.Host), par("port", strconv.Itoa(p.Porta)), par("user", c.Usuario),
-		par("dbname", banco), par("sslmode", c.SSLMode),
+		par("dbname", banco), par("sslmode", sslmode),
 	}
 	if aplicacao != "" {
 		partes = append(partes, par("application_name", aplicacao))
@@ -261,6 +269,8 @@ func explicarPG(c cadastro.Conexao, banco string, err error) error {
 			msg = "o servidor está iniciando, desligando ou em recuperação, e não aceita conexões agora"
 		case "53300":
 			msg = "o servidor está sem conexões livres (max_connections)"
+		case tunel.CodigoTLS:
+			msg = pe.Message
 		default:
 			msg = fmt.Sprintf("%s (%s)", pe.Message, pe.Code)
 		}

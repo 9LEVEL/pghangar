@@ -501,10 +501,6 @@ func (x Conexao) Validar() error {
 			return errors.New("com túnel, o banco precisa de host e porta TCP (o socket não atravessa o túnel)")
 		case x.SaltoHost != "" && (x.SaltoPorta <= 0 || x.SaltoPorta > 65535 || strings.TrimSpace(x.SaltoUsuario) == ""):
 			return errors.New("com bastion, informe a porta e o usuário dele")
-		case x.SSLMode == "verify-full":
-			// O libpq confere o nome do certificado contra o host da conexão, que no túnel é
-			// 127.0.0.1. O SSH já cifra o caminho.
-			return errors.New("verify-full não funciona pelo túnel (o host visto pelo cliente é 127.0.0.1): use require")
 		}
 	}
 	return nil

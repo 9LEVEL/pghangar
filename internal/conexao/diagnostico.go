@@ -144,6 +144,10 @@ func Diagnosticar(ctx context.Context, c cadastro.Conexao, a Ambiente, s Segredo
 				d.ok("Postgres", "respondeu")
 				d.ok("Autenticação", c.Usuario)
 				return d.falha("Banco", err)
+			case tunel.CodigoTLS:
+				if ponte.Tunel != nil {
+					return d.falha("TLS", err)
+				}
 			}
 		}
 		return d.falha("Postgres", err)
@@ -170,6 +174,17 @@ func Diagnosticar(ctx context.Context, c cadastro.Conexao, a Ambiente, s Segredo
 	}
 	if !d.Info.Superusuario {
 		detalhe += ", SEM superusuário"
+	}
+	// No socket local não há TLS, e nem precisa: só pelo túnel ou pela rede ele diz algo.
+	if ponte.Tunel != nil || !ponte.Socket() {
+		var ssl bool
+		if err := conn.QueryRow(ctx, `SELECT coalesce((SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()), false)`).Scan(&ssl); err == nil {
+			if ssl {
+				detalhe += ", com TLS"
+			} else {
+				detalhe += ", sem TLS"
+			}
+		}
 	}
 	d.ok("Pronto", detalhe)
 	return d

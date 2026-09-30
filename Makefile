@@ -5,7 +5,7 @@
 #   make integracao      testes de integração (containers presos em 127.0.0.1)
 #   sudo make instalar   instala em /opt/pghangar e copia para /usr/local/bin
 
-VERSAO  ?= v0.3.0
+VERSAO  ?= v0.3.1
 OPT     ?= /opt/pghangar
 BIN     ?= /usr/local/bin
 LDFLAGS := -s -w -X main.versao=$(VERSAO)

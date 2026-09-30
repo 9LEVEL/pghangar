@@ -40,6 +40,15 @@ type pg struct {
 	nome   string
 	versao int
 	porta  int
+	ssl    bool // só aceita TLS pela rede (hostssl)
+}
+
+// sslmode é o que os testes usam para falar direto com o servidor.
+func (s *pg) sslmode() string {
+	if s.ssl {
+		return "require"
+	}
+	return "disable"
 }
 
 var (
@@ -48,7 +57,13 @@ var (
 )
 
 // subir sobe (uma vez por processo) um Postgres local preso em 127.0.0.1.
-func subir(t *testing.T, chave string, versao int) *pg {
+func subir(t *testing.T, chave string, versao int) *pg { return subirCom(t, chave, versao, false) }
+
+// subirTLS sobe um Postgres que, pela rede, só aceita conexões com TLS (hostssl), como o pg_hba
+// de muitas produções.
+func subirTLS(t *testing.T, chave string, versao int) *pg { return subirCom(t, chave, versao, true) }
+
+func subirCom(t *testing.T, chave string, versao int, ssl bool) *pg {
 	t.Helper()
 	muPG.Lock()
 	defer muPG.Unlock()
@@ -56,8 +71,13 @@ func subir(t *testing.T, chave string, versao int) *pg {
 		return s
 	}
 	nome := fmt.Sprintf("pghangar-teste-%s-%d", chave, rand.Intn(1_000_000))
-	out, err := exec.Command("docker", "run", "-d", "--rm", "--name", nome, "-e", "POSTGRES_PASSWORD="+senhaTeste,
-		"-p", "127.0.0.1::5432", fmt.Sprintf("postgres:%d", versao)).CombinedOutput()
+	args := []string{"run", "-d", "--rm", "--name", nome, "-e", "POSTGRES_PASSWORD=" + senhaTeste, "-p", "127.0.0.1::5432"}
+	if ssl {
+		args = append(args, argsTLS(t, versao)...)
+	} else {
+		args = append(args, fmt.Sprintf("postgres:%d", versao))
+	}
+	out, err := exec.Command("docker", args...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("subindo %s: %v %s", nome, err, out)
 	}
@@ -70,18 +90,18 @@ func subir(t *testing.T, chave string, versao int) *pg {
 		t.Fatalf("o container de teste precisa estar preso em 127.0.0.1: %s", linha)
 	}
 	porta, _ := strconv.Atoi(linha[strings.LastIndex(linha, ":")+1:])
-	s := &pg{nome: nome, versao: versao, porta: porta}
+	s := &pg{nome: nome, versao: versao, porta: porta, ssl: ssl}
 	// Espera aceitar conexões (o entrypoint reinicia o servidor uma vez).
 	prazo := time.Now().Add(90 * time.Second)
 	for {
-		c, err := pgx.Connect(context.Background(), fmt.Sprintf("postgres://postgres:%s@127.0.0.1:%d/postgres?sslmode=disable", urlEsc(senhaTeste), porta))
+		c, err := pgx.Connect(context.Background(), fmt.Sprintf("postgres://postgres:%s@127.0.0.1:%d/postgres?sslmode=%s", urlEsc(senhaTeste), porta, s.sslmode()))
 		if err == nil {
 			var ok int
 			err = c.QueryRow(context.Background(), "SELECT 1").Scan(&ok)
 			_ = c.Close(context.Background())
 			if err == nil {
 				time.Sleep(1500 * time.Millisecond)
-				if c2, err := pgx.Connect(context.Background(), fmt.Sprintf("postgres://postgres:%s@127.0.0.1:%d/postgres?sslmode=disable", urlEsc(senhaTeste), porta)); err == nil {
+				if c2, err := pgx.Connect(context.Background(), fmt.Sprintf("postgres://postgres:%s@127.0.0.1:%d/postgres?sslmode=%s", urlEsc(senhaTeste), porta, s.sslmode())); err == nil {
 					_ = c2.Close(context.Background())
 					break
 				}
@@ -135,7 +155,7 @@ func sql(t *testing.T, s *pg, banco string, cmds ...string) {
 
 func conectar(t *testing.T, s *pg, banco string) *pgx.Conn {
 	t.Helper()
-	cfg, err := pgx.ParseConfig(fmt.Sprintf("host=127.0.0.1 port=%d user=postgres dbname='%s' sslmode=disable", s.porta, strings.ReplaceAll(banco, "'", `\'`)))
+	cfg, err := pgx.ParseConfig(fmt.Sprintf("host=127.0.0.1 port=%d user=postgres dbname='%s' sslmode=%s", s.porta, strings.ReplaceAll(banco, "'", `\'`), s.sslmode()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +275,7 @@ func (w *travado) Write(p []byte) (int, error) {
 func (a *ambiente) conexao(t *testing.T, nome, tag string, s *pg) {
 	t.Helper()
 	c := cadastro.Conexao{Nome: nome, Tag: tag, Acesso: cadastro.AcessoDireto, Host: "127.0.0.1", Porta: s.porta, Usuario: "postgres",
-		ModoSenha: cadastro.SenhaGuardar, Senha: senhaTeste, SSLMode: "disable", BancoAdmin: "postgres"}
+		ModoSenha: cadastro.SenhaGuardar, Senha: senhaTeste, SSLMode: s.sslmode(), BancoAdmin: "postgres"}
 	if err := a.cad.SalvarConexao(context.Background(), "", c); err != nil {
 		t.Fatal(err)
 	}

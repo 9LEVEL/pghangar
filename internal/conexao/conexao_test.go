@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/9LEVEL/pghangar/internal/cadastro"
+	"github.com/9LEVEL/pghangar/internal/tunel"
 )
 
 func conexaoTeste() cadastro.Conexao {
@@ -30,6 +31,22 @@ func TestDSNSemSenhaEComAspas(t *testing.T) {
 	}
 	if valorDSN("") != "''" || valorDSN(`a\b`) != `'a\\b'` || valorDSN("a=b") != "'a=b'" {
 		t.Fatal("valorDSN")
+	}
+}
+
+// Pelo túnel, o TLS é do túnel: o cliente fala em claro com o socket, e a DSN diz isso, em vez de
+// um require que o libpq ignoraria no socket.
+func TestDSNPeloTunelSemTLSNoCliente(t *testing.T) {
+	c := conexaoTeste()
+	c.Acesso, c.SSLMode = cadastro.AcessoSSH, "require"
+	if d := DSN(c, &Ponte{Host: "/tmp/tunel-1", Porta: 5432, Tunel: &tunel.Tunel{}}, "loja", ""); !strings.Contains(d, "sslmode=disable") {
+		t.Fatalf("pelo túnel, o cliente não negocia TLS: %s", d)
+	}
+	if d := DSN(c, &Ponte{Host: "db.exemplo", Porta: 5432}, "loja", ""); !strings.Contains(d, "sslmode=require") {
+		t.Fatalf("direto, vale o sslmode da conexão: %s", d)
+	}
+	if cfg := ConfigTunel(c, Ambiente{}, Segredos{}); cfg.SSLMode != "require" {
+		t.Fatalf("o túnel precisa receber o sslmode: %q", cfg.SSLMode)
 	}
 }
 
