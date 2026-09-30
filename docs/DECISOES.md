@@ -395,8 +395,9 @@ permissões frouxas.
 **Decidido:** a ferramenta passa a se chamar **pghangar**: o binário, o módulo Go
 (`github.com/9LEVEL/pghangar`), os diretórios (`/opt/pghangar`, `/var/lib/pghangar`), a role
 temporária (`pghangar_…`), os containers e labels (`pghangar-…`, `pghangar.execucao`), o
-`application_name` e o repositório. As entradas acima que citam só o caminho ou o prefixo foram
-atualizadas; as que registram o nome da época ficam como estavam.
+`application_name`, o repositório e a pasta do código (`/docker/pghangar`). As entradas acima
+que citam só o caminho ou o prefixo foram atualizadas; as que registram o nome da época ficam como
+estavam.
 
 **Por quê:** o hangar é onde o avião fica guardado e é preparado para voar, e a ferramenta faz isso
 com o banco: guarda dumps, anteriores e o banco base, e prepara as cópias. Faz par com o pgtower (a
