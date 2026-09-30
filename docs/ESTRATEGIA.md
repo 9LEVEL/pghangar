@@ -194,6 +194,20 @@ Um perfil é **uma cópia de um banco**. Vários bancos são vários perfis.
 - **script SQL pós-restore**, opcional (§7, etapa 7);
 - o diretório dos dumps (padrão em §13).
 
+**No formulário, os bancos se escolhem num seletor de etiquetas,** com a lista da última
+verificação da conexão, sem digitar o nome:
+- as letras filtram, o espaço marca e as setas andam entre as etiquetas. O `ctrl+r` verifica a
+  conexão de novo e atualiza a lista;
+- ficam de fora o `postgres` e os bancos da própria ferramenta (`__novo`, `__anterior`, `__base`).
+  Um banco que não aceita conexões aparece apagado;
+- um nome fora da lista continua valendo: o filtro sem par vira a etiqueta "usar …";
+- no destino, a primeira etiqueta é "o mesmo nome da origem", e os bancos que já existem aparecem
+  na cor de aviso, porque são substituídos;
+- o nome do perfil vem preenchido com `<banco>-<destino>` até ser editado;
+- **no perfil novo, marcar vários bancos cria um perfil por banco,** com as mesmas opções,
+  chamados `<banco>-<destino>` e com o banco de destino de mesmo nome. Eles saem marcados como
+  grupo, e o enter os copia em fila. Na edição, o seletor escolhe um banco só.
+
 ## 7. O motor: as etapas de uma cópia
 
 As etapas, na ordem em que a tela as mostra (`internal/motor`). As que não se aplicam a uma
@@ -414,7 +428,7 @@ andamento.
 |---|---|
 | | **As fases 1, 2 e 3 estão prontas** (2026-09-29), testadas só em localhost. Ficaram de fora da 3: o modo rápido com pgcopydb (exige outra imagem, e o link instável já cobre o problema principal) e a anonimização (não é necessária). |
 | **1** | conexões com diagnóstico e leitura da versão; **túnel SSH com chaves, `known_hosts` e instruções para o host da produção**; imagens (baixar e travar); perfis com tabelas sem dados e script pós-restore; o motor completo; confirmações; `__anterior` com pergunta e desfazer; aba Dumps; execução separada; histórico |
-| **1+** | as melhorias depois da pesquisa de mercado (`docs/MERCADO.md`): compressão zstd/lz4; filtro de schemas e tabelas (com `--extension=*`); **servidores de destino aprovados** (tecla `v`); checagens de disco local e de roles citadas pela RLS; quem rodou (o login por trás do sudo); os bancos por sugestão no formulário (`ctrl+n`); o dump refeito sozinho quando o túnel cai |
+| **1+** | as melhorias depois da pesquisa de mercado (`docs/MERCADO.md`): compressão zstd/lz4; filtro de schemas e tabelas (com `--extension=*`); **servidores de destino aprovados** (tecla `v`); checagens de disco local e de roles citadas pela RLS; quem rodou (o login por trás do sudo); os bancos por sugestão no formulário (`ctrl+n`; depois, o seletor com filtro do §6); o dump refeito sozinho quando o túnel cai |
 | **2** | atualizar imagens (`u`, com confirmação; as antigas ficam); restaurar um dump guardado (aba 4, `r`, sem ir à origem); `pghangar rodar` para o cron; **contagem exata de linhas no mesmo snapshot do dump** (`pg_export_snapshot` + `pg_dump --snapshot`) |
 | **3** | **dump retomável para link instável** (abaixo); aviso ao terminar por webhook; **grupos de perfis** em fila (espaço marca, enter copia); **bastion**; **banco base e "resetar da base"** (`z`) |
 

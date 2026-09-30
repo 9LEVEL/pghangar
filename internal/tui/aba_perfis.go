@@ -188,12 +188,74 @@ func (a *abaPerfis) formulario(m *Model, p cadastro.Perfil, antigo string) tea.C
 		}
 		return nil
 	}
+	// Um perfil é um banco. No perfil novo, marcar vários bancos cria um perfil por banco, com as
+	// mesmas opções (docs/DECISOES.md, 2026-09-30).
+	varios := func(f *formulario) bool { return antigo == "" && len(f.valores("origem_banco")) > 1 }
+	origemMarcados, destinoMarcados := []string(nil), []string{""}
+	if p.OrigemBanco != "" {
+		origemMarcados = []string{p.OrigemBanco}
+	}
+	if p.DestinoBanco != "" && p.DestinoBanco != p.OrigemBanco {
+		destinoMarcados = []string{p.DestinoBanco}
+	}
+	nome := novoCampo("nome", "Nome", p.Nome, "Como o perfil aparece na lista. Vem preenchido com <banco>-<destino> até você editá-lo.", obrig)
+	nome.visivel = func(f *formulario) bool { return !varios(f) }
+	if antigo == "" {
+		nome.auto = func(f *formulario) string {
+			if bs := f.valores("origem_banco"); len(bs) == 1 {
+				return bs[0] + "-" + f.valor("destino")
+			}
+			return ""
+		}
+	}
+	origemBanco := campoDeEscolha("origem_banco", "Banco de origem", "", escolha{
+		itens: func(f *formulario) []itemEscolha { return itensOrigem(m, f.valor("origem")) },
+		multi: antigo == "",
+		livre: "usar %q (não visto na última verificação)",
+		info:  func(f *formulario) string { return infoBancos(m, f.valor("origem")) },
+		reler: a.relerBancos(m, "origem", "origem_banco"),
+		resumo: func(n int) string {
+			if n > 1 {
+				return fmt.Sprintf("→ %d perfis, um por banco", n)
+			}
+			return ""
+		},
+		marcados: origemMarcados,
+	}, func(s string) error {
+		if s == "" {
+			return errors.New("marque o banco (espaço marca)")
+		}
+		return nil
+	})
+	origemBanco.ajudaDin = func(f *formulario) string {
+		if bs := f.valores("origem_banco"); len(bs) > 1 {
+			var ns []string
+			for _, b := range bs {
+				ns = append(ns, b+"-"+f.valor("destino"))
+			}
+			return fmt.Sprintf("%d bancos marcados: vira um perfil por banco, com as mesmas opções (%s). O banco de destino tem o mesmo nome do de origem.", len(bs), strings.Join(ns, ", "))
+		}
+		return "O banco copiado."
+	}
+	destinoBanco := campoDeEscolha("destino_banco", "Banco de destino", "", escolha{
+		itens: func(f *formulario) []itemEscolha {
+			return itensDestino(m, f.valor("destino"), f.valores("origem_banco"))
+		},
+		livre:    "usar %q (é criado na primeira cópia)",
+		info:     func(f *formulario) string { return infoBancos(m, f.valor("destino")) },
+		reler:    a.relerBancos(m, "destino", "destino_banco"),
+		marcados: destinoMarcados,
+	}, nil)
+	destinoBanco.visivel = func(f *formulario) bool { return !varios(f) }
+	destinoBanco.ajudaDin = func(f *formulario) string {
+		return "O banco é substituído a cada cópia, e o antigo vira <banco>__anterior_<data>. Se não existir, é criado. Os que já existem aparecem na cor de aviso."
+	}
 	campos := []campo{
-		novoCampo("nome", "Nome", p.Nome, "Como o perfil aparece na lista: por exemplo, loja-homolog.", obrig),
+		nome,
 		campoDeOpcao("origem", "Origem", "A conexão de onde o banco vem (normalmente a produção).", todas, p.Origem),
-		novoCampo("origem_banco", "Banco de origem", p.OrigemBanco, "", obrig),
+		origemBanco,
 		campoDeOpcao("destino", "Destino", "Só aparecem conexões dev e homolog: um banco prod nunca é destino.", destinos, p.Destino),
-		novoCampo("destino_banco", "Banco de destino", p.DestinoBanco, "", nil),
+		destinoBanco,
 		novoCampo("jobs_dump", "Jobs no dump", strconv.Itoa(p.JobsDump), "Conexões paralelas na origem. Cada uma é uma consulta longa na produção: comece com 2.", jobs),
 		novoCampo("jobs_restore", "Jobs no restore", strconv.Itoa(p.JobsRestore), "Conexões paralelas no destino, no restore e no ANALYZE.", jobs),
 		novoCampo("sem_dados", "Tabelas sem dados", strings.Join(p.SemDados, ", "), "Padrões do pg_dump separados por vírgula (public.log_*, auditoria.*): essas tabelas vêm só com a estrutura.", nil),
@@ -208,13 +270,6 @@ func (a *abaPerfis) formulario(m *Model, p cadastro.Perfil, antigo string) tea.C
 		campoDeOpcao("retomavel", "Link instável", "sim: os dados vêm em blocos pela chave e, se o túnel cair, o dump continua de onde parou (até de uma cópia anterior que morreu). Sem snapshot único; não aceita a lista \"Só as tabelas\".", []string{"não", "sim"}, simNao(p.Retomavel)),
 		campoDeOpcao("guardar_base", "Guardar base", "sim: cada cópia deixa <banco>__base no destino (fechado), para resetar o destino depois sem ir à origem (tecla z). Ocupa o tamanho do banco a mais.", []string{"não", "sim"}, simNao(p.GuardarBase)),
 	}
-	campos[2].ajudaDin = func(f *formulario) string { return bancosDe(m, f.valor("origem"), "O banco copiado.") }
-	campos[2].sugestoes = func(f *formulario) []string { return nomesDeBancos(m, f.valor("origem")) }
-	campos[4].sugestoes = func(f *formulario) []string { return nomesDeBancos(m, f.valor("destino")) }
-	campos[4].ajudaDin = func(f *formulario) string {
-		b := orDefault(f.valor("destino_banco"), f.valor("origem_banco"))
-		return bancosDe(m, f.valor("destino"), "Vazio é o mesmo nome da origem. O banco é substituído a cada cópia (o antigo vira "+nomes.PrefixoAnteriores(orDefault(b, "banco"))+"…); se não existir, é criado.")
-	}
 	titulo := "Novo perfil"
 	if antigo != "" {
 		titulo = "Editar o perfil " + antigo
@@ -222,15 +277,21 @@ func (a *abaPerfis) formulario(m *Model, p cadastro.Perfil, antigo string) tea.C
 	return m.form.abrir(titulo, "", campos, func(f *formulario) (tea.Cmd, error) {
 		jd, _ := strconv.Atoi(f.valor("jobs_dump"))
 		jr, _ := strconv.Atoi(f.valor("jobs_restore"))
-		novo := cadastro.Perfil{
-			Nome: f.valor("nome"), Origem: f.valor("origem"), OrigemBanco: f.valor("origem_banco"),
-			Destino: f.valor("destino"), DestinoBanco: orDefault(f.valor("destino_banco"), f.valor("origem_banco")), JobsDump: jd, JobsRestore: jr,
+		base := cadastro.Perfil{
+			Origem: f.valor("origem"), Destino: f.valor("destino"), JobsDump: jd, JobsRestore: jr,
 			SemDados: strings.Split(f.valor("sem_dados"), ","), Script: f.valor("script"), DirDumps: f.valor("dir"),
 			Compressao: f.valor("compressao"), Schemas: strings.Split(f.valor("schemas"), ","), SchemasFora: strings.Split(f.valor("schemas_fora"), ","),
 			Tabelas: strings.Split(f.valor("tabelas"), ","), TabelasFora: strings.Split(f.valor("tabelas_fora"), ","),
 			ConferirLinhas: f.valor("conferir_linhas") == "sim", GuardarBase: f.valor("guardar_base") == "sim",
 			Retomavel: f.valor("retomavel") == "sim",
 		}
+		bancos := f.valores("origem_banco")
+		if varios(f) {
+			return nil, a.salvarVarios(m, base, bancos)
+		}
+		novo := base
+		novo.Nome, novo.OrigemBanco = f.valor("nome"), bancos[0]
+		novo.DestinoBanco = orDefault(f.valor("destino_banco"), bancos[0])
 		if err := m.o.Cadastro.SalvarPerfil(context.Background(), antigo, novo); err != nil {
 			return nil, err
 		}
@@ -243,6 +304,48 @@ func (a *abaPerfis) formulario(m *Model, p cadastro.Perfil, antigo string) tea.C
 		m.status = "perfil " + novo.Nome + " salvo: enter para copiar"
 		return nil, nil
 	})
+}
+
+// salvarVarios cria um perfil por banco, com as mesmas opções: <banco>-<destino>, e o banco de
+// destino com o mesmo nome. Um nome que já existe barra todos, antes de gravar qualquer um. Os
+// perfis salvos ficam marcados, e o enter os copia em fila.
+func (a *abaPerfis) salvarVarios(m *Model, base cadastro.Perfil, bancos []string) error {
+	var ps []cadastro.Perfil
+	var repetidos []string
+	for _, b := range bancos {
+		p := base
+		p.Nome, p.OrigemBanco, p.DestinoBanco = b+"-"+base.Destino, b, b
+		if _, ok := perfilPorNome(m, p.Nome); ok {
+			repetidos = append(repetidos, p.Nome)
+		}
+		ps = append(ps, p)
+	}
+	if len(repetidos) > 0 {
+		return fmt.Errorf("já existem os perfis %s: desmarque esses bancos, ou crie-os um de cada vez, com outro nome", strings.Join(repetidos, ", "))
+	}
+	var salvos []string
+	for _, p := range ps {
+		if err := m.o.Cadastro.SalvarPerfil(context.Background(), "", p); err != nil {
+			m.recarregar()
+			if len(salvos) > 0 {
+				return fmt.Errorf("%s: %w (os anteriores já foram salvos: %s)", p.Nome, err, strings.Join(salvos, ", "))
+			}
+			return fmt.Errorf("%s: %w", p.Nome, err)
+		}
+		salvos = append(salvos, p.Nome)
+	}
+	m.recarregar()
+	a.marcados = map[string]bool{}
+	for _, n := range salvos {
+		a.marcados[n] = true
+	}
+	for i, x := range m.perfis {
+		if x.Nome == salvos[0] {
+			a.cursor = i
+		}
+	}
+	m.status = fmt.Sprintf("%d perfis salvos e marcados: enter copia em fila", len(salvos))
+	return nil
 }
 
 func orDefault(s, d string) string {
@@ -268,34 +371,133 @@ func simNao(b bool) string {
 	return "não"
 }
 
-// nomesDeBancos são os bancos que a última verificação viu na conexão, sem os da ferramenta.
-func nomesDeBancos(m *Model, conexao string) []string {
+// --- os bancos no seletor ---------------------------------------------------------------------
+
+// foraDoSeletor são os bancos que não aparecem: o postgres e os da própria ferramenta (__novo,
+// __anterior, __base). Os templates a verificação já não lê.
+func foraDoSeletor(nome string) bool {
+	return nome == "postgres" || strings.Contains(nome, nomes.SufixoNovo) || strings.Contains(nome, nomes.MarcaAnterior) ||
+		strings.HasSuffix(nome, nomes.SufixoBase)
+}
+
+func descreverBanco(b cadastro.Banco) string {
+	s := fmt.Sprintf("%s · %s · dono %s · %s", b.Nome, motor.Tamanho(b.Tamanho), b.Dono, b.Codificacao)
+	if b.Collate != "" {
+		s += " · " + b.Collate
+	}
+	return s
+}
+
+// itensOrigem são os bancos que a última verificação viu na conexão de origem.
+func itensOrigem(m *Model, conexao string) []itemEscolha {
 	c, ok := m.conexao(conexao)
 	if !ok {
 		return nil
 	}
-	var ns []string
+	var its []itemEscolha
 	for _, b := range c.Info.Bancos {
-		if !strings.Contains(b.Nome, nomes.SufixoNovo) && !strings.Contains(b.Nome, nomes.MarcaAnterior) && b.Nome != "postgres" {
-			ns = append(ns, b.Nome)
+		if foraDoSeletor(b.Nome) {
+			continue
 		}
+		it := itemEscolha{valor: b.Nome, extra: motor.Tamanho(b.Tamanho), detalhe: descreverBanco(b)}
+		var usam []string
+		for _, p := range m.perfis {
+			if p.Origem == conexao && p.OrigemBanco == b.Nome {
+				usam = append(usam, p.Nome)
+			}
+		}
+		if len(usam) > 0 {
+			it.detalhe += "\njá é a origem de: " + strings.Join(usam, ", ")
+		}
+		if !b.Conexoes {
+			it.apagado = true
+			it.detalhe += "\nnão aceita conexões (datallowconn desligado)"
+		}
+		its = append(its, it)
 	}
-	return ns
+	return its
 }
 
-// bancosDe lista os bancos que a última verificação viu na conexão, para a ajuda do campo.
-func bancosDe(m *Model, conexao, prefixo string) string {
-	c, ok := m.conexao(conexao)
-	if !ok || len(c.Info.Bancos) == 0 {
-		return prefixo + " (a conexão ainda não foi verificada: teste-a na aba 3 para ver os bancos.)"
-	}
-	var ns []string
+// itensDestino são "o mesmo nome da origem" e os bancos que já existem no destino, em amarelo:
+// escolhido, o banco é substituído a cada cópia.
+func itensDestino(m *Model, conexao string, origem []string) []itemEscolha {
+	c, _ := m.conexao(conexao)
+	existe := map[string]bool{}
+	var its []itemEscolha
 	for _, b := range c.Info.Bancos {
-		if !strings.Contains(b.Nome, nomes.SufixoNovo) && !strings.Contains(b.Nome, nomes.MarcaAnterior) {
-			ns = append(ns, b.Nome)
+		existe[b.Nome] = true
+		if foraDoSeletor(b.Nome) {
+			continue
+		}
+		its = append(its, itemEscolha{valor: b.Nome, extra: motor.Tamanho(b.Tamanho), aviso: true,
+			detalhe: descreverBanco(b) + "\nexiste em " + conexao + ": é substituído a cada cópia, e o antigo vira " + nomes.PrefixoAnteriores(b.Nome) + "<data>"})
+	}
+	mesmo := itemEscolha{valor: "", rotulo: "o mesmo nome da origem", detalhe: "o banco de destino tem o nome do de origem"}
+	if len(origem) == 1 {
+		o := origem[0]
+		if existe[o] {
+			mesmo.aviso = true
+			mesmo.detalhe = o + " existe em " + conexao + ": é substituído a cada cópia, e o antigo vira " + nomes.PrefixoAnteriores(o) + "<data>"
+		} else {
+			mesmo.detalhe = o + " não existe em " + conexao + ": é criado na primeira cópia"
 		}
 	}
-	return prefixo + " Bancos em " + conexao + ": " + strings.Join(ns, ", ")
+	return append([]itemEscolha{mesmo}, its...)
+}
+
+// infoBancos diz de quando é a lista de bancos da conexão.
+func infoBancos(m *Model, conexao string) string {
+	c, ok := m.conexao(conexao)
+	switch {
+	case !ok:
+		return ""
+	case c.Info.VerificadaEm.IsZero():
+		return "a conexão ainda não foi verificada: ctrl+r verifica"
+	case c.Info.Erro != "":
+		return "a última verificação parou em " + c.Info.Camada + ": a lista é de antes"
+	}
+	return "lida " + idade(c.Info.VerificadaEm)
+}
+
+// relerBancos é o ctrl+r do seletor: verifica a conexão de novo, sem perguntar nada (o formulário
+// ficaria para trás). O que faltar, a aba 3 pergunta.
+func (a *abaPerfis) relerBancos(m *Model, chaveConexao, chaveCampo string) func(f *formulario) tea.Cmd {
+	return func(f *formulario) tea.Cmd {
+		nome, g := f.valor(chaveConexao), f.geracao
+		return m.executar(&tarefa{
+			rotulo: "lendo os bancos de " + nome,
+			rodar: func(ctx context.Context, seg conexao.Segredos) (any, error) {
+				c, err := m.o.Cadastro.Conexao(ctx, nome)
+				if err != nil {
+					return nil, err
+				}
+				return resultadoDiag{nome: nome, d: m.o.Diagnosticar(ctx, c, seg)}, nil
+			},
+			pronto: func(m *Model, v any, err error) tea.Cmd {
+				var aviso string
+				if err != nil {
+					aviso = err.Error()
+				} else {
+					r := v.(resultadoDiag)
+					m.conexoesA.guardar(m, r.nome, r.d)
+					switch {
+					case r.d.PrecisaSenha || r.d.PrecisaFrase != "" || r.d.HostDesconhecido != nil:
+						aviso = "a verificação de " + nome + " precisa da senha, da passphrase ou de aceitar o servidor SSH: teste a conexão na aba 3 (tecla t)"
+					case r.d.Parou() != "":
+						aviso = "a verificação de " + nome + " parou em " + r.d.Parou() + ": " + r.d.Info.Erro
+					default:
+						aviso = fmt.Sprintf("%s: %d banco(s) lido(s) agora", nome, len(r.d.Info.Bancos))
+					}
+				}
+				if m.form.ativo && m.form.geracao == g {
+					if c := m.form.campo(chaveCampo); c != nil {
+						c.esc.aviso = aviso
+					}
+				}
+				return nil
+			},
+		})
+	}
 }
 
 // --- desenho ------------------------------------------------------------------------------------

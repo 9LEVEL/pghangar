@@ -441,3 +441,33 @@ ao TLS do cliente. Como o TLS termina no túnel, o libpq, que fala em claro, rec
 offered SCRAM-SHA-256-PLUS authentication over a non-SSL connection"). Sem o PLUS, perde-se só essa
 amarração, que protege contra um intermediário no TLS. Aqui, o intermediário é o próprio túnel, e o
 trecho do cliente até ele é o socket só do root.
+
+## 2026-09-30: Os bancos do perfil num seletor com filtro
+
+**Recomendação aceita pelo usuário,** que pediu para escolher os bancos como etiquetas, sem digitar.
+
+**Decidido:**
+- os campos "Banco de origem" e "Banco de destino" do perfil viram um **seletor de etiquetas**
+  com a lista da última verificação da conexão. As letras filtram, o espaço marca, as setas andam,
+  e o `ctrl+r` verifica a conexão de novo sem sair do formulário. O `ctrl+n`/`ctrl+p`, que trocava
+  o valor pelo banco seguinte, sai;
+- ficam de fora o `postgres` e os bancos da ferramenta (`__novo`, `__anterior`, `__base`). Um
+  banco que não aceita conexões aparece apagado. Um nome fora da lista continua valendo, pela
+  etiqueta "usar …";
+- **no perfil novo, vários bancos marcados criam um perfil por banco,** com as mesmas opções,
+  chamados `<banco>-<destino>`, e saem marcados como grupo para o enter copiar em fila. Um nome
+  que já existe barra todos, antes de gravar qualquer um;
+- o nome do perfil vem preenchido com `<banco>-<destino>` até ser editado;
+- **só teclado.** A tela não captura o mouse.
+
+**Por quê:**
+- **Digitar o nome era lento e deixava passar erro.** Um erro de digitação só aparecia no plano,
+  depois do túnel e do diagnóstico. Com o `ctrl+n`, um cluster de 30 bancos pedia até 30 toques.
+- **Por que etiquetas e filtro.** Num terminal, a "nuvem de palavras" não tem tamanhos
+  diferentes, e o que vira são etiquetas em linhas corridas. O filtro é o que deixa a lista
+  usável quando ela cresce.
+- **Por que vários perfis, e não um perfil com vários bancos.** Continua valendo a regra de um
+  banco por perfil (§6 da estratégia): o motor, o plano e a fila foram feitos assim, e cada cópia
+  tem o seu dump, o seu anterior e o seu desfazer.
+- **Por que sem mouse.** Capturar o mouse tira do terminal a seleção de texto, que a tela usa para
+  copiar, por exemplo, a linha do `authorized_keys`.

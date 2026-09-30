@@ -146,6 +146,16 @@ func tecla(m *Model, ks ...string) {
 			msg = tea.KeyMsg{Type: tea.KeyUp}
 		case "down":
 			msg = tea.KeyMsg{Type: tea.KeyDown}
+		case "left":
+			msg = tea.KeyMsg{Type: tea.KeyLeft}
+		case "right":
+			msg = tea.KeyMsg{Type: tea.KeyRight}
+		case "backspace":
+			msg = tea.KeyMsg{Type: tea.KeyBackspace}
+		case "ctrl+a":
+			msg = tea.KeyMsg{Type: tea.KeyCtrlA}
+		case "ctrl+r":
+			msg = tea.KeyMsg{Type: tea.KeyCtrlR}
 		case " ":
 			msg = tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}
 		default:

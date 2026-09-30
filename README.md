@@ -39,8 +39,10 @@ Pré-requisito: Docker no servidor. A primeira vez:
    chave SSH; `l` mostra as linhas prontas para o `authorized_keys` de cada servidor da produção;
 2. **aba 3:** `a` cadastra a produção (tag `prod`, acesso `ssh`) e o destino (`homolog` ou `dev`).
    Ao salvar, a conexão é testada em camadas e a versão é lida;
-3. **aba 1:** `a` cria o perfil. Daí em diante, copiar é **enter** e confirmar (`y` num destino dev;
-   o nome do banco num homolog).
+3. **aba 1:** `a` cria o perfil. Os bancos se escolhem numa lista: digite parte do nome para
+   filtrar, e o espaço marca. Marcar vários cria um perfil por banco, já marcados para copiar em
+   fila. Daí em diante, copiar é **enter** e confirmar (`y` num destino dev; o nome do banco num
+   homolog).
 
 A cópia roda num processo separado: pode fechar a tela (ou cair o SSH) sem pará-la.
 

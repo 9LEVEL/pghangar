@@ -21,6 +21,7 @@ const (
 	campoTexto tipoCampo = iota
 	campoSegredo
 	campoOpcao
+	campoEscolha
 )
 
 type campo struct {
@@ -36,9 +37,12 @@ type campo struct {
 	visivel func(f *formulario) bool
 	// ajudaDin, se houver, troca a ajuda conforme os outros campos (os bancos da conexão escolhida).
 	ajudaDin func(f *formulario) string
-	// sugestoes, se houver, são valores que ctrl+n e ctrl+p põem no campo (os bancos vistos).
-	sugestoes func(f *formulario) []string
-	sug       int
+	// esc é o seletor de etiquetas do campoEscolha.
+	esc escolha
+	// auto, se houver, preenche o campo a partir dos outros (o nome do perfil) enquanto ninguém o
+	// editar: autoValor é o último valor posto por ele.
+	auto      func(f *formulario) string
+	autoValor string
 }
 
 func novoCampo(chave, rotulo, valor, ajuda string, validar func(string) error) campo {
@@ -59,6 +63,11 @@ func campoDeSegredo(chave, rotulo, ajuda string, validar func(string) error) cam
 	return c
 }
 
+// campoDeEscolha é um campo de etiquetas (os bancos), com o seletor dado.
+func campoDeEscolha(chave, rotulo, ajuda string, e escolha, validar func(string) error) campo {
+	return campo{chave: chave, rotulo: rotulo, ajuda: ajuda, tipo: campoEscolha, esc: e, validar: validar}
+}
+
 func campoDeOpcao(chave, rotulo, ajuda string, opcoes []string, atual string) campo {
 	c := campo{chave: chave, rotulo: rotulo, ajuda: ajuda, tipo: campoOpcao, opcoes: opcoes}
 	for i, o := range opcoes {
@@ -70,6 +79,9 @@ func campoDeOpcao(chave, rotulo, ajuda string, opcoes []string, atual string) ca
 }
 
 func (c campo) valor() string {
+	if c.tipo == campoEscolha {
+		return strings.Join(c.esc.marcados, ",")
+	}
 	if c.tipo == campoOpcao {
 		if len(c.opcoes) == 0 {
 			return ""
@@ -103,11 +115,13 @@ type formulario struct {
 	foco    int
 	erro    string
 	enviar  func(f *formulario) (tea.Cmd, error)
+	largura int // a da tela, para o seletor de etiquetas saber as linhas
 }
 
 func (f *formulario) abrir(titulo, nota string, campos []campo, enviar func(f *formulario) (tea.Cmd, error)) tea.Cmd {
 	geracao++
 	*f = formulario{geracao: geracao, ativo: true, titulo: titulo, nota: nota, campos: campos, enviar: enviar}
+	f.aplicarAutos()
 	f.foco = f.proximo(-1, 1)
 	return f.focar()
 }
@@ -133,7 +147,7 @@ func (f *formulario) proximo(i, d int) int {
 func (f *formulario) focar() tea.Cmd {
 	var cmd tea.Cmd
 	for i := range f.campos {
-		if i == f.foco && f.campos[i].tipo != campoOpcao {
+		if i == f.foco && f.campos[i].tipo != campoOpcao && f.campos[i].tipo != campoEscolha {
 			cmd = f.campos[i].entrada.Focus()
 		} else {
 			f.campos[i].entrada.Blur()
@@ -148,12 +162,41 @@ func (f *formulario) mover(d int) tea.Cmd {
 }
 
 func (f *formulario) valor(chave string) string {
-	for _, c := range f.campos {
-		if c.chave == chave {
-			return c.valor()
-		}
+	if c := f.campo(chave); c != nil {
+		return c.valor()
 	}
 	return ""
+}
+
+func (f *formulario) campo(chave string) *campo {
+	for i := range f.campos {
+		if f.campos[i].chave == chave {
+			return &f.campos[i]
+		}
+	}
+	return nil
+}
+
+// valores são as etiquetas marcadas de um campoEscolha.
+func (f *formulario) valores(chave string) []string {
+	if c := f.campo(chave); c != nil {
+		return append([]string(nil), c.esc.marcados...)
+	}
+	return nil
+}
+
+// aplicarAutos refaz os campos automáticos que ninguém editou.
+func (f *formulario) aplicarAutos() {
+	for i := range f.campos {
+		c := &f.campos[i]
+		if c.auto == nil || c.entrada.Value() != c.autoValor {
+			continue
+		}
+		v := c.auto(f)
+		c.entrada.SetValue(v)
+		c.entrada.CursorEnd()
+		c.autoValor = v
+	}
 }
 
 // validarTudo confere cada campo visível e leva o foco ao primeiro com erro.
@@ -174,7 +217,20 @@ func (f *formulario) validarTudo() bool {
 }
 
 func (f *formulario) atualizar(msg tea.KeyMsg) (resultadoForm, tea.Cmd) {
+	r, cmd := f.tratar(msg)
+	if f.ativo {
+		f.aplicarAutos()
+	}
+	return r, cmd
+}
+
+func (f *formulario) tratar(msg tea.KeyMsg) (resultadoForm, tea.Cmd) {
 	cur := &f.campos[f.foco]
+	if cur.tipo == campoEscolha {
+		if r, cmd, ok := cur.esc.tecla(f, msg); ok {
+			return r, cmd
+		}
+	}
 	switch msg.String() {
 	case "esc":
 		f.fechar()
@@ -195,26 +251,8 @@ func (f *formulario) atualizar(msg tea.KeyMsg) (resultadoForm, tea.Cmd) {
 			cur.sel = (cur.sel + 1) % len(cur.opcoes)
 			return formNada, nil
 		}
-	case "ctrl+n", "ctrl+p":
-		if cur.sugestoes != nil {
-			if ss := cur.sugestoes(f); len(ss) > 0 {
-				if msg.String() == "ctrl+n" {
-					cur.sug = (cur.sug + 1) % (len(ss) + 1)
-				} else {
-					cur.sug = (cur.sug - 1 + len(ss) + 1) % (len(ss) + 1)
-				}
-				// A posição 0 é "voltar ao que estava digitado": aqui, o campo vazio.
-				if cur.sug == 0 {
-					cur.entrada.SetValue("")
-				} else {
-					cur.entrada.SetValue(ss[cur.sug-1])
-				}
-				cur.entrada.CursorEnd()
-			}
-			return formNada, nil
-		}
 	}
-	if cur.tipo == campoOpcao {
+	if cur.tipo == campoOpcao || cur.tipo == campoEscolha {
 		return formNada, nil
 	}
 	var cmd tea.Cmd
@@ -222,8 +260,11 @@ func (f *formulario) atualizar(msg tea.KeyMsg) (resultadoForm, tea.Cmd) {
 	return formNada, cmd
 }
 
+// larguraForm é a largura do conteúdo do formulário na tela.
+func larguraForm(largTela int) int { return limitar(largTela-8, 50, 92) }
+
 func (f *formulario) view(w, h int) string {
-	larg := limitar(w-8, 50, 92)
+	larg := larguraForm(w)
 	titulo := faixa(corDestaque, f.titulo)
 	rot := 0
 	for _, c := range f.campos {
@@ -235,8 +276,13 @@ func (f *formulario) view(w, h int) string {
 			visiveis = append(visiveis, i)
 		}
 	}
+	// O seletor em foco ocupa várias linhas.
+	var aberto []string
+	if c := &f.campos[f.foco]; c.tipo == campoEscolha {
+		aberto = c.esc.desenhar(f, larguraEtiquetas(w))
+	}
 	// Um formulário mais alto que a tela rola com o foco (os campos longe dele ficam de fora).
-	cabe := max(h-16, 4)
+	cabe := max(h-16-len(aberto), 4)
 	ini, fim := 0, len(visiveis)
 	if len(visiveis) > cabe {
 		pos := 0
@@ -258,8 +304,16 @@ func (f *formulario) view(w, h int) string {
 			r = stTecla.Render(preencher("› "+c.rotulo, rot))
 		}
 		v := c.entrada.View()
-		if c.tipo == campoOpcao {
+		switch c.tipo {
+		case campoOpcao:
 			v = stDica.Render("‹ ") + stValor.Render(c.valor()) + stDica.Render(" ›")
+		case campoEscolha:
+			v = c.esc.resumir(f, larg-rot-2)
+			if i == f.foco {
+				linhas = append(linhas, r)
+				linhas = append(linhas, aberto...)
+				continue
+			}
 		}
 		linhas = append(linhas, r+"  "+v)
 	}
@@ -275,13 +329,14 @@ func (f *formulario) view(w, h int) string {
 	if d := f.campos[f.foco].ajudaDin; d != nil {
 		a = d(f)
 	}
-	if f.campos[f.foco].sugestoes != nil {
-		a += " (ctrl+n/ctrl+p: escolher entre eles)"
-	}
 	if a != "" {
 		corpo += "\n\n" + lipgloss.NewStyle().Width(larg).Foreground(corApagada).Render(a)
 	}
-	corpo += "\n\n" + stDica.Render("tab/↑↓ campos · ←→ opções · enter salvar · esc cancelar")
+	teclas := "tab/↑↓ campos · ←→ opções · enter salvar · esc cancelar"
+	if c := &f.campos[f.foco]; c.tipo == campoEscolha {
+		teclas = c.esc.teclas()
+	}
+	corpo += "\n\n" + lipgloss.NewStyle().Width(larg).Inherit(stDica).Render(teclas)
 	if f.erro != "" {
 		corpo += "\n\n" + lipgloss.NewStyle().Width(larg).Inherit(stErro).Render(f.erro)
 	}

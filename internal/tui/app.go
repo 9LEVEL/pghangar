@@ -413,6 +413,7 @@ func (m *Model) tecla(k tea.KeyMsg) tea.Cmd {
 		}
 		return cmd
 	case m.form.ativo:
+		m.form.largura = m.largura
 		r, cmd := m.form.atualizar(k)
 		if r == formEnviar && m.form.validarTudo() {
 			g := m.form.geracao
