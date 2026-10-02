@@ -34,6 +34,7 @@ type Servicos struct {
 	Planejar            func(ctx context.Context, perfil string, seg conexao.Segredos) (motor.Plano, error)
 	PlanejarRestauracao func(ctx context.Context, dumpDir string, seg conexao.Segredos) (motor.Plano, error)
 	PlanejarReset       func(ctx context.Context, perfil string, seg conexao.Segredos) (motor.Plano, error)
+	PlanejarArquivo     func(ctx context.Context, pd motor.PedidoArquivo, seg conexao.Segredos) (motor.Plano, error)
 	Diagnosticar        func(ctx context.Context, c cadastro.Conexao, seg conexao.Segredos) conexao.Diagnostico
 	Listar              func(ctx context.Context, conexao, banco string, seg conexao.Segredos) (motor.DaFerramenta, error)
 	Desfazer            func(ctx context.Context, conexao, banco, anterior string, seg conexao.Segredos) (string, error)
@@ -65,6 +66,9 @@ func ServicosReais(cad *cadastro.Cadastro, d local.Dir, l execucao.Lancador, dep
 		},
 		PlanejarReset: func(ctx context.Context, perfil string, seg conexao.Segredos) (motor.Plano, error) {
 			return motor.PlanejarReset(ctx, deps(seg), perfil)
+		},
+		PlanejarArquivo: func(ctx context.Context, pd motor.PedidoArquivo, seg conexao.Segredos) (motor.Plano, error) {
+			return motor.PlanejarArquivo(ctx, deps(seg), pd)
 		},
 		Diagnosticar: func(ctx context.Context, c cadastro.Conexao, seg conexao.Segredos) conexao.Diagnostico {
 			return conexao.Diagnosticar(ctx, c, amb(), seg)

@@ -2,6 +2,8 @@
 // clientes oficiais em containers. Ver docs/ESTRATEGIA.md.
 //
 //	pghangar [--dir D]                                   a tela
+//	pghangar rodar [--confirmar BANCO] PERFIL            uma cópia sem a tela (o cron)
+//	pghangar restaurar --destino C --banco B ARQUIVO     um arquivo da pasta de entrada, sem a tela
 //	pghangar executar --dir D --execucao N [--trocar]    o processo de uma cópia (a tela sobe)
 //	pghangar versao
 package main
@@ -92,6 +94,8 @@ func rodar(args []string) error {
 			return executar(args[1:])
 		case "rodar":
 			return rodarPerfil(args[1:])
+		case "restaurar":
+			return restaurarArquivo(args[1:])
 		}
 	}
 	fs := flag.NewFlagSet("pghangar", flag.ContinueOnError)
@@ -126,6 +130,11 @@ const ajuda = `pghangar: copia bancos PostgreSQL (16, 17, 18) por dump e restore
                             copia sem a tela (para o cron): num destino homolog, --confirmar
                             com o nome do banco é obrigatório. Nunca apaga anteriores.
                             Sai com 0 (ok), 2 (a troca espera a decisão, pela tela) ou 1 (erro)
+  pghangar restaurar [--dir D] --destino CONEXAO --banco BANCO [--jobs N] [--confirmar BANCO] ARQUIVO
+                            restaura um arquivo da pasta de entrada (D/entrada) num banco de uma
+                            conexão dev ou homolog: pg_dump custom, tar, diretório ou SQL (.sql,
+                            .sql.gz). ARQUIVO é o nome dele na pasta. As regras e as saídas são as
+                            do rodar; o banco que estava lá vira __anterior
   pghangar versao        mostra a versão
   pghangar ajuda         esta ajuda
 
@@ -244,6 +253,67 @@ func rodarPerfil(args []string) error {
 
 	dp := deps(d, cad, conexao.Segredos{}, nil)
 	p, err := motor.Planejar(ctx, dp, nome)
+	return semTela(ctx, d, cad, dp, p, err, cadastro.TipoCopia, *confirmar, "rodar")
+}
+
+// restaurarArquivo restaura um arquivo da pasta de entrada sem a tela, com as regras do rodar.
+func restaurarArquivo(args []string) error {
+	fs := flag.NewFlagSet("restaurar", flag.ContinueOnError)
+	dir := fs.String("dir", local.Padrao, "o diretório da ferramenta")
+	destino := fs.String("destino", "", "a conexão de destino (dev ou homolog)")
+	banco := fs.String("banco", "", "o banco de destino")
+	jobs := fs.Int("jobs", 4, "jobs do restore (só o custom e o diretório restauram em paralelo)")
+	confirmar := fs.String("confirmar", "", "o nome do banco de destino (obrigatório num destino homolog)")
+	pos, err := argumentos(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) != 1 || *destino == "" || *banco == "" {
+		return errors.New("use: pghangar restaurar --destino CONEXAO --banco BANCO [--jobs N] [--confirmar BANCO] ARQUIVO")
+	}
+	d, err := dirDe(*dir)
+	if err != nil {
+		return err
+	}
+	cad, err := abrir(d)
+	if err != nil {
+		return err
+	}
+	defer cad.Fechar()
+	// O arquivo é o nome dele na pasta de entrada; um caminho também vale, se for de lá.
+	caminho := pos[0]
+	if !strings.ContainsRune(caminho, '/') {
+		caminho = filepath.Join(d.Entrada(), caminho)
+	}
+	_ = execucao.Conferir(context.Background(), cad, d)
+	signal.Ignore(syscall.SIGHUP)
+	ctx, parar := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer parar()
+	dp := deps(d, cad, conexao.Segredos{}, nil)
+	p, err := motor.PlanejarArquivo(ctx, dp, motor.PedidoArquivo{Caminho: caminho, Conexao: *destino, Banco: *banco, Jobs: *jobs})
+	return semTela(ctx, d, cad, dp, p, err, cadastro.TipoArquivo, *confirmar, "restaurar")
+}
+
+// argumentos lê as opções antes e depois dos argumentos ("restaurar loja.dump --destino dev"): o
+// flag do Go para no primeiro argumento.
+func argumentos(fs *flag.FlagSet, args []string) ([]string, error) {
+	var pos []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		if fs.NArg() == 0 {
+			return pos, nil
+		}
+		pos = append(pos, fs.Arg(0))
+		args = fs.Args()[1:]
+	}
+}
+
+// semTela roda um plano no primeiro plano, sem perguntar nada: o rodar e o restaurar. O que
+// precisaria de pergunta vira erro; nenhuma correção é aplicada; num homolog, --confirmar com o
+// nome do banco é obrigatório; e nada é apagado.
+func semTela(ctx context.Context, d local.Dir, cad *cadastro.Cadastro, dp motor.Deps, p motor.Plano, err error, tipo, confirmar, comando string) error {
 	var pg *motor.Pergunta
 	if errors.As(err, &pg) {
 		switch {
@@ -268,7 +338,7 @@ func rodarPerfil(args []string) error {
 			fmt.Println("aviso (correção só pela tela):", c.SeNao)
 		}
 	}
-	if c := p.Confirmacao(); c != "" && *confirmar != c {
+	if c := p.Confirmacao(); c != "" && confirmar != c {
 		return fmt.Errorf("o destino é homolog: para substituir o banco %s sem a tela, passe --confirmar %s", c, c)
 	}
 	for _, a := range p.Avisos {
@@ -283,8 +353,9 @@ func rodarPerfil(args []string) error {
 	}
 	defer t.Soltar()
 	pj, _ := json.Marshal(p)
-	id, err := cad.NovaExecucao(ctx, cadastro.Execucao{Perfil: nome, Tipo: cadastro.TipoCopia, Estado: cadastro.EstadoIniciando,
-		Destino: p.Perfil.Destino, Banco: p.Perfil.DestinoBanco, Plano: string(pj), Operador: execucao.Operador() + " (rodar)"})
+	nome := p.Perfil.Nome
+	id, err := cad.NovaExecucao(ctx, cadastro.Execucao{Perfil: nome, Tipo: tipo, Estado: cadastro.EstadoIniciando,
+		Destino: p.Perfil.Destino, Banco: p.Perfil.DestinoBanco, Plano: string(pj), Operador: execucao.Operador() + " (" + comando + ")"})
 	if err != nil {
 		return err
 	}
@@ -318,6 +389,9 @@ func rodarPerfil(args []string) error {
 		return nil
 	case cadastro.EstadoAguardando:
 		return &saida{codigo: 2, msg: "a troca espera a sua decisão: abra a tela (aba 2)"}
+	}
+	if tipo == cadastro.TipoArquivo {
+		return &saida{codigo: 1, msg: "a restauração não terminou: " + e.Estado}
 	}
 	return &saida{codigo: 1, msg: "a cópia não terminou: " + e.Estado}
 }

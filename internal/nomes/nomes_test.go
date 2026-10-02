@@ -80,3 +80,16 @@ func TestBancoBase(t *testing.T) {
 		t.Fatal("a base de um nome longo cabe em 63 bytes")
 	}
 }
+
+func TestPareceDaFerramenta(t *testing.T) {
+	for _, n := range []string{"loja__novo", "x__anterior_20260929_140207", "loja__base", "loja__base_velha", "a__anterior_"} {
+		if !PareceDaFerramenta(n) {
+			t.Errorf("%s tem a forma de um banco da ferramenta", n)
+		}
+	}
+	for _, n := range []string{"loja", "novo", "loja_novo", "base", "loja__basex", "anterior"} {
+		if PareceDaFerramenta(n) {
+			t.Errorf("%s não tem a forma de um banco da ferramenta", n)
+		}
+	}
+}

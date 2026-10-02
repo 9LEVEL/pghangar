@@ -22,6 +22,7 @@ func (d Dir) Chaves() string     { return filepath.Join(d.Raiz, "chaves") }
 func (d Dir) ChaveSSH() string   { return filepath.Join(d.Chaves(), "id_ed25519") }
 func (d Dir) KnownHosts() string { return filepath.Join(d.Raiz, "known_hosts") }
 func (d Dir) Dumps() string      { return filepath.Join(d.Raiz, "dumps") }
+func (d Dir) Entrada() string    { return filepath.Join(d.Raiz, "entrada") }
 func (d Dir) Logs() string       { return filepath.Join(d.Raiz, "logs") }
 func (d Dir) Travas() string     { return filepath.Join(d.Raiz, "travas") }
 func (d Dir) Temp() string       { return filepath.Join(d.Raiz, "tmp") }
@@ -41,7 +42,7 @@ func (d Dir) Preparar() error {
 		return err
 	}
 	d.Raiz = abs
-	for _, p := range []string{d.Raiz, d.Chaves(), d.Dumps(), d.Logs(), d.Travas(), d.Temp()} {
+	for _, p := range []string{d.Raiz, d.Chaves(), d.Dumps(), d.Entrada(), d.Logs(), d.Travas(), d.Temp()} {
 		if err := os.MkdirAll(p, 0o700); err != nil {
 			return fmt.Errorf("criando %s: %w", p, err)
 		}

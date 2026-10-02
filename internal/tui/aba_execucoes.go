@@ -64,7 +64,8 @@ func (a *abaExecucoes) tecla(m *Model, k tea.KeyMsg) tea.Cmd {
 			m.informar("A troca não é cancelada", "A troca de nomes leva segundos, e pará-la no meio deixaria o destino sem banco. Espere terminar; depois, se quiser voltar atrás, use desfazer na aba 5.")
 			return nil
 		}
-		corpo := fmt.Sprintf("A cópia #%d (%s) para na etapa %s. O container é parado.\n\n", e.ID, e.Perfil, e.Etapa)
+		nome, g := oQueE(e)
+		corpo := fmt.Sprintf("%s #%d (%s) para na etapa %s. O container é parado.\n\n", artigoM(nome, g), e.ID, e.Perfil, e.Etapa)
 		if e.Grupo != "" {
 			corpo = fmt.Sprintf("A cópia #%d (%s) é de um grupo: cancelar para a cópia em andamento e as que esperam na fila.\n\n", e.ID, e.Perfil)
 		}
@@ -73,10 +74,12 @@ func (a *abaExecucoes) tecla(m *Model, k tea.KeyMsg) tea.Cmd {
 			corpo += fmt.Sprintf("O banco %s fica no destino, incompleto: apague-o na aba Anteriores. O banco %s não é tocado.", e.BancoNovo, e.Banco)
 		case e.BancoNovo != "":
 			corpo += fmt.Sprintf("O banco %s fica no destino, restaurado mas sem a troca: apague-o na aba Anteriores. O banco %s não é tocado.", e.BancoNovo, e.Banco)
-		default:
+		case e.Tipo == cadastro.TipoCopia:
 			corpo += fmt.Sprintf("O banco de destino %s não foi tocado. O dump até aqui fica marcado como incompleto.", e.Banco)
+		default:
+			corpo += fmt.Sprintf("O banco de destino %s não foi tocado.", e.Banco)
 		}
-		m.conf.perguntar("Cancelar a cópia #"+fmt.Sprint(e.ID), corpo, func() tea.Cmd {
+		m.conf.perguntar("Cancelar "+oArtigo(nome, g)+" #"+fmt.Sprint(e.ID), corpo, func() tea.Cmd {
 			if err := m.o.Cancelar(e); err != nil {
 				m.erro("Não foi possível cancelar", err)
 				return nil
@@ -154,8 +157,11 @@ func puladas(e cadastro.Execucao) map[string]bool {
 	if e.Tipo != cadastro.TipoTroca && len(e.Apagar) == 0 {
 		r["Anteriores"] = true
 	}
-	if e.Tipo == cadastro.TipoRestauracao || e.Tipo == cadastro.TipoReset {
+	if e.Tipo == cadastro.TipoRestauracao || e.Tipo == cadastro.TipoReset || e.Tipo == cadastro.TipoArquivo {
 		r["Dump"] = true
+	}
+	if e.Tipo == cadastro.TipoArquivo {
+		r["Conferência"] = true // um arquivo de fora não traz a contagem da origem
 	}
 	if e.Tipo == cadastro.TipoReset {
 		for _, x := range []string{"Restore", "Conferência", "Script pós-restore", "Donos", "ANALYZE", "Base"} {
@@ -303,7 +309,7 @@ func (a *abaExecucoes) cartao(m *Model, e cadastro.Execucao, w int) string {
 // concluído.
 func oQueE(e cadastro.Execucao) (nome, g string) {
 	switch e.Tipo {
-	case cadastro.TipoRestauracao:
+	case cadastro.TipoRestauracao, cadastro.TipoArquivo:
 		return "restauração", "a"
 	case cadastro.TipoReset:
 		return "reset", "o"
@@ -351,7 +357,7 @@ func faixaEstado(e cadastro.Execucao, larg int) string {
 		switch {
 		case e.BancoAnterior != "":
 			fatos = append(fatos, "o banco que estava lá virou "+e.BancoAnterior+" (a aba 5 desfaz ou apaga)")
-		case e.Tipo == cadastro.TipoCopia && p.Perfil.Nome != "" && !p.Destino.Existe:
+		case (e.Tipo == cadastro.TipoCopia || e.Tipo == cadastro.TipoArquivo) && p.Perfil.Nome != "" && !p.Destino.Existe:
 			fatos = append(fatos, "o banco não existia no destino e foi criado")
 		}
 		if len(fatos) > 0 {

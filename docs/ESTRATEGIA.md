@@ -327,6 +327,8 @@ que ficou rodando aparece como **órfão** na aba Ambiente.
   - `d` apaga, com confirmação.
 - **Restaurar um dump antigo segue a regra de versões do §5:** a imagem é a maior entre a versão
   do `pg_dump` que gerou o dump e a versão do destino.
+- **Um arquivo de fora** (um backup, um dump que alguém mandou) entra pela pasta de entrada, que a
+  mesma aba lista em cima dos dumps: §17.
 
 ## 10. Confirmações e guardas
 
@@ -374,7 +376,8 @@ marca ou desmarca cada uma, e uma correção desmarcada diz o que acontece sem e
 - No grupo, as correções seguem o padrão do plano, menos a do `__novo`: num grupo nada é apagado,
   e o `__novo` que sobrou bloqueia o perfil. A confirmação do grupo lista as correções.
 - A restauração de um dump guardado oferece as mesmas, com a lista dos servidores externos
-  guardada no manifesto do dump.
+  guardada no manifesto do dump. A de um arquivo de fora oferece a do `__novo` e a dos user
+  mappings (§17).
 
 ## 11. A execução separada da tela
 
@@ -424,6 +427,7 @@ e **se recusa a abrir** se as permissões estiverem frouxas, como o OpenSSH.
 | `chaves/` | chaves SSH geradas pela ferramenta | `700` / `600` |
 | `known_hosts` | as chaves conferidas dos hosts SSH | `600` |
 | `dumps/` | os dumps, por perfil | `700` |
+| `entrada/` | os arquivos de fora, para restaurar num dev ou homolog (§17) | `700` |
 | `logs/<execução>.log` | o log completo de cada execução | `600` |
 
 ## 14. Telas
@@ -437,7 +441,7 @@ andamento.
 | **1 Perfis** | os perfis com o resultado da última cópia ("ontem 14:02 · OK · 3m12s · 1,2 GB"). **Enter copia** |
 | **2 Execuções** | a cópia em andamento, com o progresso por etapa, e o histórico com o log |
 | **3 Conexões** | as conexões com o estado de cada uma. `a` adiciona, `e` edita, `d` remove, `t` testa |
-| **4 Dumps** | os dumps guardados. `r` restaura de novo, `d` apaga |
+| **4 Dumps** | a pasta de entrada (os arquivos de fora) e os dumps guardados. `r` restaura (o arquivo num dev ou homolog; o dump de novo), `d` apaga |
 | **5 Anteriores** | os bancos `__anterior`. `u` desfaz, `d` apaga |
 | **6 Ambiente** | o Docker, as imagens (baixar e atualizar) e a chave SSH pública deste servidor |
 
@@ -487,6 +491,7 @@ rodapé diz como ela terminou ("✔ #3 loja concluída em 3m12s").
 | **1+** | as melhorias depois da pesquisa de mercado (`docs/MERCADO.md`): compressão zstd/lz4; filtro de schemas e tabelas (com `--extension=*`); **servidores de destino aprovados** (tecla `v`); checagens de disco local e de roles citadas pela RLS; quem rodou (o login por trás do sudo); os bancos por sugestão no formulário (`ctrl+n`; depois, o seletor com filtro do §6); o dump refeito sozinho quando o túnel cai |
 | **2** | atualizar imagens (`u`, com confirmação; as antigas ficam); restaurar um dump guardado (aba 4, `r`, sem ir à origem); `pghangar rodar` para o cron; **contagem exata de linhas no mesmo snapshot do dump** (`pg_export_snapshot` + `pg_dump --snapshot`) |
 | **3** | **dump retomável para link instável** (abaixo); aviso ao terminar por webhook; **grupos de perfis** em fila (espaço marca, enter copia); **bastion**; **banco base e "resetar da base"** (`z`) |
+| **3+** | **restaurar um arquivo de fora** num dev ou homolog (§17), pela aba 4 ou pelo `pghangar restaurar` |
 
 ### Sem a tela: `pghangar rodar`
 
@@ -570,3 +575,53 @@ só o dump dos dados:
 **O passo intermediário também existe:** no modo normal (`pg_dump -Fd`), o dump que cai por rede é
 refeito sozinho (3 tentativas, com backoff), e a tentativa que caiu fica no disco como
 `dump.incompleto-N`.
+
+## 17. Restaurar um arquivo de fora
+
+**O caso:** um backup, ou um dump que alguém mandou, precisa virar um banco de desenvolvimento ou
+de homologação. Sem a ferramenta, é um `pg_restore` à mão, sem as guardas de uma cópia.
+
+**Como funciona:**
+1. **O arquivo vai para a pasta de entrada,** `/var/lib/pghangar/entrada` (`sudo mv`; um link
+   também vale). Um upload direto para lá (`scp`, `cp` de outro disco) escreve no nome final e
+   aparece na lista antes de terminar: copie com um nome oculto (`.loja.dump.part`) e renomeie no
+   fim, ou use `rsync`, que já faz assim. Os ocultos ficam de fora da lista e são recusados. A aba 4
+   lista a pasta em cima dos dumps, com o formato, o tamanho e o que o cabeçalho diz (o banco de onde
+   veio, as versões e a data).
+2. **`r` no arquivo** pede a conexão (só dev e homolog), o banco (o seletor dos perfis; vem
+   sugerido o banco do cabeçalho, ou o nome do arquivo) e os jobs (no tar e no SQL, só o ANALYZE os
+   usa). A leitura de um SQL grande antes do plano pode levar minutos: o esc a cancela.
+3. **O plano** faz as guardas de uma cópia no destino (§10), escolhe a imagem pela versão do arquivo
+   (§5), confere as extensões que o arquivo cria e, num SQL, lê o arquivo inteiro com as regras
+   abaixo. A confirmação é a de uma cópia: `y` num dev, o nome do banco num homolog.
+4. **A execução** é a de uma cópia sem o dump e sem a conferência: o `__novo` com a role temporária,
+   o restore, os donos, as configurações do banco de agora, o ANALYZE e a troca. O banco que estava
+   lá vira `__anterior` (a aba 5 desfaz ou apaga). O arquivo só é lido e continua na pasta.
+
+| formato | reconhecido por | restaura com |
+|---|---|---|
+| custom (`-Fc`) | `PGDMP` no começo | `pg_restore`, em paralelo |
+| diretório (`-Fd`) | um diretório com o `toc.dat` | `pg_restore`, em paralelo |
+| tar (`-Ft`) | um tar que começa com o `toc.dat` | `pg_restore`, um job |
+| SQL puro, com ou sem gzip | texto, ou o gzip dele | `psql`, pela entrada padrão, um job |
+
+**O SQL puro** vai ao `psql` pela entrada padrão do container, já descomprimido, conferido comando
+a comando (o texto entre dois `;` de fora de string, de `$$` e de comentário; os dados de um `COPY`
+não são conferidos):
+- **recusado:** roles, tablespaces, `ALTER SYSTEM`, `REASSIGN`/`DROP OWNED`, `LOAD`, `COPY … PROGRAM`,
+  um segundo banco e qualquer comando do `psql`, em qualquer lugar da linha. Passam só o
+  `\restrict`/`\unrestrict` do pg_dump e o `\connect` do banco de um `-C`, sozinhos na linha;
+- **pulado:** os comandos do próprio banco de um `pg_dump -C`, as subscriptions e as publications
+  (viram espaços, e o número das linhas nos erros continua o do arquivo);
+- **cortado:** um `COPY` sem o `\.`, uma string aberta no fim ou um dump sem a linha final do
+  pg_dump bloqueiam o plano e param o restore antes da troca;
+- **como estão:** os donos e as permissões. Uma role que falta vira erro, e a troca espera a
+  decisão (as mensagens do servidor vêm em inglês, para os erros serem contados). O formato custom
+  entrega tudo ao dono do destino e restaura em paralelo: é o melhor para quem gera o arquivo.
+
+Os user mappings de um arquivo (do índice ou dos `CREATE USER MAPPING`) têm a correção de uma
+cópia (§10), desmarcada. Não é um sandbox: o arquivo roda com superusuário no destino, como num
+restore à mão, e o plano lembra de restaurar só arquivos de fonte confiável.
+
+**Sem a tela:** `pghangar restaurar --destino CONEXAO --banco BANCO [--jobs N] [--confirmar BANCO]
+ARQUIVO`, em que ARQUIVO é o nome na pasta de entrada. As regras e as saídas são as do `rodar`.

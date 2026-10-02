@@ -14,8 +14,9 @@ import (
 	"github.com/9LEVEL/pghangar/internal/nomes"
 )
 
-// abaAnteriores mostra, por destino dos perfis, os bancos que a ferramenta deixou: os __anterior
-// (desfazer ou apagar) e o __novo que sobrou de uma cópia que não terminou.
+// abaAnteriores mostra, por destino dos perfis e das restaurações de arquivo, os bancos que a
+// ferramenta deixou: os __anterior (desfazer ou apagar) e o __novo que sobrou de uma cópia que não
+// terminou.
 type abaAnteriores struct {
 	cursor    int
 	carregado bool
@@ -25,6 +26,7 @@ type abaAnteriores struct {
 type destinoAnt struct {
 	conexao, banco string
 	perfis         []string
+	arquivo        bool // uma restauração de arquivo escreveu nele
 	dados          motor.DaFerramenta
 	erro           string
 }
@@ -56,8 +58,8 @@ func (a *abaAnteriores) itens() []item {
 
 type resultadoAnteriores []destinoAnt
 
-func (a *abaAnteriores) carregar(m *Model) tea.Cmd {
-	// Os destinos dos perfis, sem repetição.
+// destinosAgora são os destinos dos perfis e das restaurações de arquivo, sem repetição.
+func destinosAgora(m *Model) []destinoAnt {
 	vistos := map[string]int{}
 	var ds []destinoAnt
 	for _, p := range m.perfis {
@@ -69,6 +71,41 @@ func (a *abaAnteriores) carregar(m *Model) tea.Cmd {
 		vistos[k] = len(ds)
 		ds = append(ds, destinoAnt{conexao: p.Destino, banco: p.DestinoBanco, perfis: []string{p.Nome}})
 	}
+	// Os bancos das restaurações de arquivo, que não são de perfil nenhum.
+	if das, err := m.o.Cadastro.DestinosDeArquivo(context.Background()); err == nil {
+		for _, x := range das {
+			k := x.Conexao + "\x00" + x.Banco
+			if i, ok := vistos[k]; ok {
+				ds[i].arquivo = true
+				continue
+			}
+			if _, ok := m.conexao(x.Conexao); !ok {
+				continue // a conexão saiu do cadastro
+			}
+			vistos[k] = len(ds)
+			ds = append(ds, destinoAnt{conexao: x.Conexao, banco: x.Banco, arquivo: true})
+		}
+	}
+	return ds
+}
+
+// mudaram diz se os destinos de agora não são os da última leitura (um perfil novo, uma restauração
+// de arquivo num banco novo): a aba lê de novo ao entrar.
+func (a *abaAnteriores) mudaram(m *Model) bool {
+	ds := destinosAgora(m)
+	if len(ds) != len(a.destinos) {
+		return true
+	}
+	for i := range ds {
+		if ds[i].conexao != a.destinos[i].conexao || ds[i].banco != a.destinos[i].banco {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *abaAnteriores) carregar(m *Model) tea.Cmd {
+	ds := destinosAgora(m)
 	return m.executar(&tarefa{
 		rotulo: "lendo os bancos da ferramenta nos destinos",
 		rodar: func(ctx context.Context, seg conexao.Segredos) (any, error) {
@@ -123,7 +160,7 @@ func (a *abaAnteriores) tecla(m *Model, k tea.KeyMsg) tea.Cmd {
 		d := a.destinos[it.d]
 		corpo := fmt.Sprintf("%s, em %s (%s).\n\nApagado, ele não volta.", it.nome, d.conexao, motor.Tamanho(it.tamanho))
 		if it.novo {
-			corpo = fmt.Sprintf("%s é o banco de uma cópia que não terminou, em %s (%s). O banco %s não é tocado.\n\nApagado, ele não volta.",
+			corpo = fmt.Sprintf("%s é o banco de uma cópia ou restauração que não terminou, em %s (%s). O banco %s não é tocado.\n\nApagado, ele não volta.",
 				it.nome, d.conexao, motor.Tamanho(it.tamanho), d.banco)
 		}
 		if it.base {
@@ -190,8 +227,8 @@ func (a *abaAnteriores) desfazer(m *Model, d destinoAnt, it item) tea.Cmd {
 }
 
 func (a *abaAnteriores) view(m *Model) string {
-	if len(m.perfis) == 0 {
-		return "\n" + stDica.Render("  Sem perfis, sem destinos. Os bancos __anterior aparecem aqui depois da primeira cópia.")
+	if a.carregado && len(a.destinos) == 0 {
+		return "\n" + stDica.Render("  Nenhum destino ainda. Os bancos __anterior aparecem aqui depois da primeira cópia ou restauração.")
 	}
 	if !a.carregado {
 		return "\n" + stDica.Render("  lendo os destinos… (r para ler de novo)")
@@ -207,7 +244,14 @@ func (a *abaAnteriores) view(m *Model) string {
 	cur := a.cursor
 	for _, d := range a.destinos {
 		c, _ := m.conexao(d.conexao)
-		b.WriteString("\n " + seloTag(c.Tag) + " " + stValor.Render(d.conexao+" / "+d.banco) + stDica.Render("  perfis: "+strings.Join(d.perfis, ", ")) + "\n")
+		de := "perfis: " + strings.Join(d.perfis, ", ")
+		switch {
+		case len(d.perfis) == 0:
+			de = "restaurado de arquivo"
+		case d.arquivo:
+			de += "; também restaurado de arquivo"
+		}
+		b.WriteString("\n " + seloTag(c.Tag) + " " + stValor.Render(d.conexao+" / "+d.banco) + stDica.Render("  "+de) + "\n")
 		if d.erro != "" {
 			b.WriteString("   " + stPerigoV.Render("✖ ") + stDica.Render(d.erro) + "\n")
 			continue
@@ -220,7 +264,7 @@ func (a *abaAnteriores) view(m *Model) string {
 			idx++
 		}
 		if d.dados.Novo != nil {
-			b.WriteString(a.linha(idx == cur, d.dados.Novo.Nome, d.dados.Novo.Tamanho, stAvisoV.Render("sobrou de uma cópia que não terminou: bloqueia a próxima cópia")))
+			b.WriteString(a.linha(idx == cur, d.dados.Novo.Nome, d.dados.Novo.Tamanho, stAvisoV.Render("sobrou de uma cópia ou restauração que não terminou: bloqueia a próxima")))
 			idx++
 		}
 		if d.dados.Base != nil {

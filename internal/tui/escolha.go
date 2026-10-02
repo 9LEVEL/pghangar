@@ -40,6 +40,9 @@ type escolha struct {
 	reler func(f *formulario) tea.Cmd
 	// resumo, se houver, vai depois das marcadas quando o seletor está fechado.
 	resumo func(n int) string
+	// foraDaLista, se houver, é o detalhe de um valor marcado que a lista não tem (o padrão é "não
+	// visto na última verificação").
+	foraDaLista func(f *formulario, v string) string
 
 	marcados []string
 	filtro   string
@@ -69,7 +72,11 @@ func (e *escolha) visiveis(f *formulario) []itemEscolha {
 	}
 	for _, v := range e.marcados {
 		if !conhecidos[v] {
-			todos = append(todos, itemEscolha{valor: v, detalhe: v + ": não visto na última verificação", livre: true})
+			det := v + ": não visto na última verificação"
+			if e.foraDaLista != nil {
+				det = e.foraDaLista(f, v)
+			}
+			todos = append(todos, itemEscolha{valor: v, detalhe: det, livre: true})
 			conhecidos[v] = true
 		}
 	}

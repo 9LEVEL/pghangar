@@ -218,6 +218,7 @@ const (
 	TipoTroca       = "troca"       // só a troca, depois de o sysadmin decidir
 	TipoRestauracao = "restauracao" // um dump guardado, restaurado de novo, sem ir à origem
 	TipoReset       = "reset"       // o destino recriado a partir do <banco>__base
+	TipoArquivo     = "arquivo"     // um arquivo de fora (da pasta de entrada), restaurado num dev ou homolog
 )
 
 // Execucao é uma cópia, do começo ao fim, com o progresso de agora.
@@ -759,7 +760,8 @@ func (c *Cadastro) SalvarPerfil(ctx context.Context, antigo string, p Perfil) er
 		if n, _ := r.RowsAffected(); n == 0 {
 			return fmt.Errorf("perfil %q: %w", antigo, ErrNaoExiste)
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE execucoes SET perfil = ? WHERE perfil = ?`, p.Nome, antigo); err != nil {
+		// As restaurações de arquivo guardam o nome do arquivo no lugar do perfil: ficam como estão.
+		if _, err := tx.ExecContext(ctx, `UPDATE execucoes SET perfil = ? WHERE perfil = ? AND tipo <> ?`, p.Nome, antigo, TipoArquivo); err != nil {
 			return err
 		}
 	}
@@ -1063,6 +1065,30 @@ func (c *Cadastro) UltimaDoPerfil(ctx context.Context, perfil string) (Execucao,
 		return e, false, nil
 	}
 	return e, err == nil, err
+}
+
+// DestinoDeArquivo é um banco onde uma restauração de arquivo escreveu: os anteriores dele aparecem
+// na aba Anteriores, como os dos perfis.
+type DestinoDeArquivo struct{ Conexao, Banco string }
+
+// DestinosDeArquivo são os bancos onde alguma restauração de arquivo escreveu (criou o __novo), sem
+// repetição. As que pararam antes, nas checagens, não deixaram nada lá.
+func (c *Cadastro) DestinosDeArquivo(ctx context.Context) ([]DestinoDeArquivo, error) {
+	rows, err := c.db.QueryContext(ctx, `SELECT destino, banco FROM execucoes WHERE tipo = ? AND banco_novo <> ''
+		GROUP BY destino, banco ORDER BY destino, banco`, TipoArquivo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ds []DestinoDeArquivo
+	for rows.Next() {
+		var d DestinoDeArquivo
+		if err := rows.Scan(&d.Conexao, &d.Banco); err != nil {
+			return nil, err
+		}
+		ds = append(ds, d)
+	}
+	return ds, rows.Err()
 }
 
 // --- utilidades -------------------------------------------------------------------------------

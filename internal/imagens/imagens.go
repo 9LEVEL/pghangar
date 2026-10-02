@@ -24,6 +24,9 @@ import (
 const (
 	Rotulo          = "pghangar.execucao"
 	RotuloInstancia = "pghangar.instancia"
+	// RotuloPlano é o valor do Rotulo de um container do plano (o pg_restore --list de um arquivo):
+	// dura um instante, e não é de execução nenhuma.
+	RotuloPlano = "plano"
 )
 
 // Docker fala com o Docker pela linha de comando.
@@ -140,6 +143,9 @@ type Volume struct {
 	Origem    string
 	Destino   string
 	SoLeitura bool
+	// Existente monta com --mount: se a origem sumiu, o docker falha, em vez de criar um diretório
+	// vazio no lugar dela. A origem não pode ter vírgula nem aspas.
+	Existente bool
 }
 
 // Execucao é um comando rodado numa imagem.
@@ -150,15 +156,35 @@ type Execucao struct {
 	Volumes  []Volume
 	Ambiente map[string]string // nunca segredos: a senha vai no pgpass montado
 	Comando  []string
+	// Entrada, se houver, vai para a entrada padrão do comando (docker run --interactive): o SQL de
+	// um arquivo, já descomprimido e filtrado.
+	Entrada io.Reader
+	// SemRede roda sem rede (o pg_restore --list do plano não conecta em nada).
+	SemRede bool
 }
 
 // Args é a linha de comando do docker run. Um teste confere que nenhuma senha aparece aqui.
 func (e Execucao) Args() []string {
-	a := []string{"run", "--rm", "--pull", "never", "--network", "host", "--name", e.Nome}
+	rede := "host"
+	if e.SemRede {
+		rede = "none"
+	}
+	a := []string{"run", "--rm", "--pull", "never", "--network", rede, "--name", e.Nome}
+	if e.Entrada != nil {
+		a = append(a, "--interactive")
+	}
 	for _, k := range ordenar(e.Rotulos) {
 		a = append(a, "--label", k+"="+e.Rotulos[k])
 	}
 	for _, v := range e.Volumes {
+		if v.Existente {
+			m := "type=bind,source=" + v.Origem + ",target=" + v.Destino
+			if v.SoLeitura {
+				m += ",readonly"
+			}
+			a = append(a, "--mount", m)
+			continue
+		}
 		m := v.Origem + ":" + v.Destino
 		if v.SoLeitura {
 			m += ":ro"
@@ -191,6 +217,7 @@ func (d Docker) Rodar(ctx context.Context, e Execucao, linha Linha) (int, error)
 		return -1, errors.New("container sem nome: sem ele, não dá para parar no cancelamento")
 	}
 	cmd := exec.Command(d.bin(), e.Args()...)
+	cmd.Stdin = e.Entrada
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		return -1, err
@@ -221,6 +248,9 @@ func (d Docker) Rodar(ctx context.Context, e Execucao, linha Linha) (int, error)
 				vez.Unlock()
 			}
 		}
+		// Uma linha maior que o buffer para o scanner: o resto é descartado, para o processo não
+		// travar com o pipe cheio.
+		_, _ = io.Copy(io.Discard, r)
 	}
 	wg.Add(2)
 	go ler(out, "saida")

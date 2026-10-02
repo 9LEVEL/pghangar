@@ -125,6 +125,9 @@ type Plano struct {
 	Correcoes []Correcao `json:"correcoes,omitempty"`
 	// DumpGuardado é o dump que uma restauração usa (vazio numa cópia da origem).
 	DumpGuardado string `json:"dump_guardado,omitempty"`
+	// Arquivo é o arquivo de fora que uma restauração de arquivo usa (arquivo.go). O perfil do plano,
+	// nela, é montado do pedido: o nome do arquivo, a conexão e o banco de destino e os jobs.
+	Arquivo *Arquivo `json:"arquivo,omitempty"`
 	// Reset: o destino é recriado a partir da base, sem ir à origem.
 	Reset bool `json:"reset,omitempty"`
 	// Base é o <banco>__base do destino, quando existe: no reset, a fonte; numa cópia com "guardar
@@ -511,35 +514,12 @@ func planejar(ctx context.Context, d Deps, nomePerfil string, guardado *Manifest
 
 	// Versões e imagem. Numa restauração, o que manda é a versão do pg_dump que gerou o dump: um
 	// pg_restore mais antigo não lê o arquivo dele.
-	cfg, err := d.Cadastro.Config(ctx)
-	if err != nil {
-		return p, err
-	}
 	versaoOrigem := versoes.Major(infoO.VersaoNum)
 	if guardado != nil {
 		versaoOrigem = max(versaoOrigem, guardado.Imagem)
 	}
-	img, err := versoes.Escolher(versaoOrigem, versoes.Major(infoD.VersaoNum), cfg.Versoes)
-	if err != nil {
-		p.bloquear("%v", err)
-	} else {
-		p.Imagem = img
-		is, err := d.Cadastro.Imagens(ctx)
-		if err != nil {
-			return p, err
-		}
-		i, ok := is[img]
-		switch {
-		case !ok:
-			p.bloquear("a imagem da versão %d não foi baixada: baixe na aba Ambiente", img)
-		case !d.Docker.Existe(ctx, i.Digest):
-			p.bloquear("a imagem travada da versão %d (%s) não está mais no Docker local: baixe de novo na aba Ambiente", img, i.Digest)
-		default:
-			p.ImagemRef, p.Cliente = i.Digest, i.Cliente
-			if imagens.MajorDoCliente(i.Cliente) != img {
-				p.bloquear("a imagem da versão %d tem o cliente %s: baixe de novo na aba Ambiente", img, i.Cliente)
-			}
-		}
+	if err := escolherImagem(ctx, d, &p, versaoOrigem, versoes.Major(infoD.VersaoNum)); err != nil {
+		return p, err
 	}
 
 	// Os bancos.
@@ -706,6 +686,95 @@ func planejar(ctx context.Context, d Deps, nomePerfil string, guardado *Manifest
 		}
 	}
 	return p, nil
+}
+
+// escolherImagem põe no plano a imagem que faz o dump e o restore: a da maior versão entre a fonte e
+// o destino (descer é bloqueado), baixada e travada. O erro é só o do cadastro; o resto bloqueia.
+func escolherImagem(ctx context.Context, d Deps, p *Plano, fonte, destino int) error {
+	cfg, err := d.Cadastro.Config(ctx)
+	if err != nil {
+		return err
+	}
+	img, err := versoes.Escolher(fonte, destino, cfg.Versoes)
+	if err != nil {
+		p.bloquear("%v", err)
+		return nil
+	}
+	p.Imagem = img
+	is, err := d.Cadastro.Imagens(ctx)
+	if err != nil {
+		return err
+	}
+	i, ok := is[img]
+	switch {
+	case !ok:
+		p.bloquear("a imagem da versão %d não foi baixada: baixe na aba Ambiente", img)
+	case !d.Docker.Existe(ctx, i.Digest):
+		p.bloquear("a imagem travada da versão %d (%s) não está mais no Docker local: baixe de novo na aba Ambiente", img, i.Digest)
+	default:
+		p.ImagemRef, p.Cliente = i.Digest, i.Cliente
+		if imagens.MajorDoCliente(i.Cliente) != img {
+			p.bloquear("a imagem da versão %d tem o cliente %s: baixe de novo na aba Ambiente", img, i.Cliente)
+		}
+	}
+	return nil
+}
+
+// abrirDestinoDoPlano abre o destino de um plano sem origem (o reset, a restauração de um arquivo) e
+// faz as guardas dele: a tag e o servidor da produção, o banco administrativo, a trava, a
+// aprovação, o superusuário e a réplica. pare diz que o plano já está bloqueado (sem destino
+// aberto); o erro é o do cadastro, ou uma *Pergunta.
+func abrirDestinoDoPlano(ctx context.Context, d Deps, p *Plano, conexaoNome, bancoDestino string) (destino *lado, pare bool, err error) {
+	c, err := d.Cadastro.Conexao(ctx, conexaoNome)
+	if err != nil {
+		return nil, true, err
+	}
+	// A regra que não depende de nada: um banco prod nunca é destino.
+	if c.Tag == cadastro.TagProd {
+		p.bloquear("a conexão de destino %s é prod: um banco prod nunca é destino", c.Nome)
+		return nil, true, nil
+	}
+	if bancoDestino == c.BancoAdmin || bancoDestino == "template0" || bancoDestino == "template1" {
+		p.bloquear("o banco de destino %s é o banco administrativo ou um template: escolha outro", bancoDestino)
+		return nil, true, nil
+	}
+	destino, _, err = abrirLado(ctx, d, conexaoNome)
+	if err != nil {
+		var pg *Pergunta
+		if errors.As(err, &pg) {
+			return nil, true, pg
+		}
+		p.bloquear("destino inacessível: %v", err)
+		return nil, true, nil
+	}
+	infoD := destino.c.Info
+	p.Destino = Lado{Conexao: destino.c.Nome, Tag: destino.c.Tag, Onde: destino.c.Onde(), VersaoNum: infoD.VersaoNum, SystemID: infoD.SystemID,
+		Recuperacao: infoD.Recuperacao, Superusuario: infoD.Superusuario, Usuario: destino.c.Usuario, Banco: bancoDestino}
+	if err := guardaProd(ctx, d, destino.c, infoD.SystemID); err != nil {
+		destino.fechar()
+		p.bloquear("%v", err)
+		return nil, true, nil
+	}
+	if !d.TravaObtida && !trava.Livre(d.Dir.Travas(), trava.Destino(conexaoNome, infoD.SystemID), bancoDestino) {
+		destino.fechar()
+		p.bloquear("há outra cópia em andamento para %s em %s", bancoDestino, conexaoNome)
+		return nil, true, nil
+	}
+	aprovados, err := d.Cadastro.DestinosAprovados(ctx)
+	if err != nil {
+		destino.fechar()
+		return nil, true, err
+	}
+	if _, ok := aprovados[infoD.SystemID]; !ok || infoD.SystemID == "" {
+		p.bloquear("o servidor de %s ainda não foi aprovado como destino de cópias: aprove-o uma vez na aba Conexões (tecla v)", destino.c.Nome)
+	}
+	if !infoD.Superusuario {
+		p.bloquear("o usuário %s não é superusuário no destino", destino.c.Usuario)
+	}
+	if infoD.Recuperacao {
+		p.bloquear("o destino %s é uma réplica (somente leitura)", destino.c.Nome)
+	}
+	return destino, false, nil
 }
 
 // lerOrigem olha a origem por dentro: extensões, tabelas, a contagem e as roles citadas. pare diz
@@ -906,52 +975,12 @@ func PlanejarReset(ctx context.Context, d Deps, nomePerfil string) (Plano, error
 		return p, err
 	}
 	p.Perfil, p.Novo = perfil, nomes.Novo(perfil.DestinoBanco)
-	cDest, err := d.Cadastro.Conexao(ctx, perfil.Destino)
-	if err != nil {
+	destino, pare, err := abrirDestinoDoPlano(ctx, d, &p, perfil.Destino, perfil.DestinoBanco)
+	if err != nil || pare {
 		return p, err
-	}
-	if cDest.Tag == cadastro.TagProd {
-		p.bloquear("a conexão de destino %s é prod: um banco prod nunca é destino", cDest.Nome)
-		return p, nil
-	}
-	if perfil.DestinoBanco == cDest.BancoAdmin || perfil.DestinoBanco == "template0" || perfil.DestinoBanco == "template1" {
-		p.bloquear("o banco de destino %s é o banco administrativo ou um template: escolha outro", perfil.DestinoBanco)
-		return p, nil
-	}
-	destino, _, err := abrirLado(ctx, d, perfil.Destino)
-	if err != nil {
-		var pg *Pergunta
-		if errors.As(err, &pg) {
-			return p, pg
-		}
-		p.bloquear("destino inacessível: %v", err)
-		return p, nil
 	}
 	defer destino.fechar()
 	infoD := destino.c.Info
-	p.Destino = Lado{Conexao: destino.c.Nome, Tag: destino.c.Tag, Onde: destino.c.Onde(), VersaoNum: infoD.VersaoNum, SystemID: infoD.SystemID,
-		Recuperacao: infoD.Recuperacao, Superusuario: infoD.Superusuario, Usuario: destino.c.Usuario, Banco: perfil.DestinoBanco}
-	if err := guardaProd(ctx, d, destino.c, infoD.SystemID); err != nil {
-		p.bloquear("%v", err)
-		return p, nil
-	}
-	if !d.TravaObtida && !trava.Livre(d.Dir.Travas(), trava.Destino(perfil.Destino, infoD.SystemID), perfil.DestinoBanco) {
-		p.bloquear("há outra cópia em andamento para %s em %s", perfil.DestinoBanco, perfil.Destino)
-		return p, nil
-	}
-	aprovados, err := d.Cadastro.DestinosAprovados(ctx)
-	if err != nil {
-		return p, err
-	}
-	if _, ok := aprovados[infoD.SystemID]; !ok || infoD.SystemID == "" {
-		p.bloquear("o servidor de %s ainda não foi aprovado como destino de cópias: aprove-o uma vez na aba Conexões (tecla v)", destino.c.Nome)
-	}
-	if !infoD.Superusuario {
-		p.bloquear("o usuário %s não é superusuário no destino", destino.c.Usuario)
-	}
-	if infoD.Recuperacao {
-		p.bloquear("o destino %s é uma réplica (somente leitura)", destino.c.Nome)
-	}
 	if err := lerBase(ctx, &p, destino.admin, perfil.DestinoBanco); err != nil {
 		return p, err
 	}

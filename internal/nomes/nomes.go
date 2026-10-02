@@ -82,6 +82,14 @@ func EhDaFerramenta(banco, nome string) bool {
 	return ok
 }
 
+// PareceDaFerramenta diz se o nome tem a forma de um banco que a ferramenta cria (um __novo, um
+// __anterior_<data>, um __base), de qualquer banco: um nome assim não pode ser escolhido como
+// destino, porque a ferramenta o trataria como seu.
+func PareceDaFerramenta(nome string) bool {
+	return strings.HasSuffix(nome, SufixoNovo) || strings.HasSuffix(nome, SufixoBase) || strings.HasSuffix(nome, SufixoBase+"_velha") ||
+		strings.Contains(nome, MarcaAnterior)
+}
+
 // RoleTemporaria é a role que faz o restore e depois passa tudo ao dono do destino. Leva a
 // instância (cada instalação da ferramenta tem a sua): duas instalações apontando para o mesmo
 // servidor nunca mexem na role uma da outra.

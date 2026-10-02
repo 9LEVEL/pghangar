@@ -60,7 +60,7 @@ func (m *Model) abrirPlano(p motor.Plano) tea.Cmd {
 	// Um plano que chega com outra janela aberta não a substitui: uma tecla dada para ela
 	// confirmaria o plano errado.
 	if m.janelaAberta() {
-		m.status = "o plano de " + p.Perfil.Nome + " ficou pronto com outra janela aberta: feche-a e tecle enter de novo"
+		m.status = "o plano de " + p.Perfil.Nome + " ficou pronto com outra janela aberta: feche-a e peça de novo"
 		return nil
 	}
 	t := &telaPlano{p: p, marcados: map[string]bool{}}
@@ -104,7 +104,8 @@ func (t *telaPlano) tecla(m *Model, k tea.KeyMsg) tea.Cmd {
 	switch k.String() {
 	case "esc":
 		m.plano = nil
-		m.status = "cópia não iniciada"
+		nome, g := nomeDaAcao(t.p)
+		m.status = nome + " não iniciad" + g
 		return nil
 	case "pgup", "pgdown", "ctrl+u", "ctrl+d":
 		t.vp, _ = t.vp.Update(k)
@@ -196,13 +197,14 @@ func (t *telaPlano) confirmar(m *Model) tea.Cmd {
 	p, apagar := t.p, t.apagar()
 	m.plano = nil
 	return m.executar(&tarefa{
-		rotulo: "iniciando a cópia de " + p.Perfil.Nome,
+		rotulo: "iniciando " + oArtigo(nomeDaAcao(p)) + " de " + p.Perfil.Nome,
 		rodar: func(ctx context.Context, seg conexao.Segredos) (any, error) {
 			return m.o.Iniciar(ctx, execucao.Pedido{Plano: p, Apagar: apagar, Segredos: seg})
 		},
 		pronto: func(m *Model, v any, err error) tea.Cmd {
 			if err != nil {
-				m.erro("A cópia não começou", err)
+				nome, g := nomeDaAcao(p)
+				m.erro(artigoM(nome, g)+" não começou", err)
 				return nil
 			}
 			id := v.(int64)
@@ -213,7 +215,8 @@ func (t *telaPlano) confirmar(m *Model) tea.Cmd {
 					m.execA.cursor = i
 				}
 			}
-			m.status = fmt.Sprintf("cópia #%d iniciada: ela roda fora da tela, e pode fechar a tela sem pará-la", id)
+			nome, g := nomeDaAcao(p)
+			m.status = fmt.Sprintf("%s #%d iniciad%s: roda fora da tela, e a tela pode fechar sem pará-l%s", nome, id, g, g)
 			return nil
 		},
 	})
@@ -239,6 +242,9 @@ func (t *telaPlano) corpo(m *Model) string {
 		if p.Base != nil {
 			secao("BASE", stValor.Render(p.Base.Nome)+stDica.Render(" · "+motor.Tamanho(p.Base.Tamanho)+" · "+p.BaseDescricao))
 		}
+	} else if a := p.Arquivo; a != nil {
+		secao("ARQUIVO", stValor.Render(a.Caminho)+stDica.Render(fmt.Sprintf(" · %s · %s", a.Formato, motor.Tamanho(a.Tamanho)))+
+			"\n"+stDica.Render(a.Origem()+" · o arquivo só é lido"))
 	} else if p.DumpGuardado != "" {
 		secao("DUMP", stValor.Render(p.DumpGuardado)+stDica.Render(fmt.Sprintf(" · da origem %s/%s · a origem não é tocada", p.Origem.Conexao, p.Origem.Banco)))
 	} else if p.Origem.Conexao != "" {
@@ -264,13 +270,24 @@ func (t *telaPlano) corpo(m *Model) string {
 		secao("DESTINO", d)
 	}
 	if p.Imagem > 0 && !p.Reset {
-		secao("IMAGEM", stTexto.Render(fmt.Sprintf("postgres:%d", p.Imagem))+stDica.Render(fmt.Sprintf(" · cliente %s · faz o dump e o restore", p.Cliente)))
+		oque := "faz o dump e o restore"
+		if p.DumpGuardado != "" || p.Arquivo != nil {
+			oque = "faz o restore"
+		}
+		secao("IMAGEM", stTexto.Render(fmt.Sprintf("postgres:%d", p.Imagem))+stDica.Render(fmt.Sprintf(" · cliente %s · %s", p.Cliente, oque)))
 	}
-	if p.DumpGuardado == "" && !p.Reset {
+	if p.DumpGuardado == "" && !p.Reset && p.Arquivo == nil {
 		secao("DUMP", stTexto.Render(p.DirDumps+"/<data>")+stDica.Render(" · fica guardado (nada é apagado sozinho)"))
 	}
 	var ops []string
-	ops = append(ops, fmt.Sprintf("jobs %d no dump, %d no restore, %s", p.Perfil.JobsDump, p.Perfil.JobsRestore, orDefault(p.Perfil.Compressao, "zstd")))
+	switch {
+	case p.Arquivo != nil && p.Arquivo.SQL():
+		ops = append(ops, "SQL pelo psql, um job só")
+	case p.Arquivo != nil:
+		ops = append(ops, fmt.Sprintf("pg_restore com %d job(s)", p.Perfil.JobsRestore))
+	default:
+		ops = append(ops, fmt.Sprintf("jobs %d no dump, %d no restore, %s", p.Perfil.JobsDump, p.Perfil.JobsRestore, orDefault(p.Perfil.Compressao, "zstd")))
+	}
 	if p.Perfil.ConferirLinhas {
 		ops = append(ops, "confere as linhas")
 	}
@@ -405,6 +422,8 @@ func (t *telaPlano) view(m *Model) string {
 	switch {
 	case p.DumpGuardado != "":
 		acao = "Restaurar o dump de novo: "
+	case p.Arquivo != nil:
+		acao = "Restaurar o arquivo "
 	case p.Reset:
 		acao = "Resetar da base: "
 	}
@@ -435,7 +454,7 @@ func (t *telaPlano) view(m *Model) string {
 		if len(p.Correcoes) > 0 {
 			ds = append(ds, dica("tab", "correções"), dica("espaço", "marcar"))
 		}
-		rod.WriteString(juntarDicas(ds...) + stDica.Render("   a cópia não pode começar: resolva os itens em vermelho"))
+		rod.WriteString(juntarDicas(ds...) + stDica.Render("   "+oArtigo(nomeDaAcao(p))+" não pode começar: resolva os itens em vermelho"))
 	case p.Confirmacao() != "":
 		rod.WriteString(stRotulo.Render("Destino homolog: para "+verbo(p)+", digite o nome do banco ") + stValor.Render(p.Confirmacao()) + "\n" + t.entrada.View() + "\n")
 		ds := []string{dica("enter", verbo(p)), dica("esc", "cancelar")}
@@ -474,18 +493,33 @@ func comAcao(p motor.Plano) string {
 	switch {
 	case p.Reset:
 		return "com o reset"
-	case p.DumpGuardado != "":
+	case p.DumpGuardado != "" || p.Arquivo != nil:
 		return "com a restauração"
 	}
 	return "com a cópia"
 }
+
+// nomeDaAcao é a ação do plano como substantivo, com a terminação dele: "cópia" e "a", "reset" e "o".
+func nomeDaAcao(p motor.Plano) (string, string) {
+	switch {
+	case p.Reset:
+		return "reset", "o"
+	case p.DumpGuardado != "" || p.Arquivo != nil:
+		return "restauração", "a"
+	}
+	return "cópia", "a"
+}
+
+// oArtigo é o nome com o artigo: "a cópia", "o reset". artigoM, para começar uma frase.
+func oArtigo(nome, g string) string { return g + " " + nome }
+func artigoM(nome, g string) string { return strings.ToUpper(g) + " " + nome }
 
 // verbo é a ação do plano, para a confirmação.
 func verbo(p motor.Plano) string {
 	switch {
 	case p.Reset:
 		return "resetar"
-	case p.DumpGuardado != "":
+	case p.DumpGuardado != "" || p.Arquivo != nil:
 		return "restaurar"
 	}
 	return "copiar"

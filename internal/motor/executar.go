@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -213,6 +214,7 @@ func (r *corrida) copiar(ctx context.Context) error {
 	}
 	restaurar := r.e.Tipo == cadastro.TipoRestauracao
 	resetar := r.e.Tipo == cadastro.TipoReset
+	arquivo := r.e.Tipo == cadastro.TipoArquivo
 	var p Plano
 	var err error
 	switch {
@@ -220,11 +222,21 @@ func (r *corrida) copiar(ctx context.Context) error {
 		p, err = PlanejarRestauracao(ctx, d, r.e.DumpDir)
 	case resetar:
 		p, err = PlanejarReset(ctx, d, r.e.Perfil)
+	case arquivo:
+		var pd PedidoArquivo
+		if pd, err = pedidoDoPlano(confirmado); err == nil {
+			p, err = PlanejarArquivo(ctx, d, pd)
+		}
 	default:
 		p, err = Planejar(ctx, d, r.e.Perfil)
 	}
 	if err != nil {
 		return fmt.Errorf("checagens: %w", err)
+	}
+	if arquivo {
+		if err := mesmoArquivo(confirmado.Arquivo, p.Arquivo); err != nil {
+			return err
+		}
 	}
 	// As correções valem como o sysadmin as marcou na confirmação, e só as mesmas.
 	if err := p.AdotarEscolhas(confirmado); err != nil {
@@ -257,9 +269,10 @@ func (r *corrida) copiar(ctx context.Context) error {
 		d.logf("nota: %s", a)
 	}
 
-	// Numa restauração, a origem não é aberta: o dump já está no disco. Num reset, nem ela nem o
-	// Docker: o destino é recriado a partir da base, no próprio servidor.
-	if !restaurar && !resetar {
+	// Numa restauração (de um dump guardado ou de um arquivo), a origem não é aberta: o dump já está
+	// no disco. Num reset, nem ela nem o Docker: o destino é recriado a partir da base, no próprio
+	// servidor.
+	if !restaurar && !resetar && !arquivo {
 		if r.origem, _, err = abrirOrigem(ctx, d, p.Perfil.Origem); err != nil {
 			return fmt.Errorf("abrindo a origem: %w", err)
 		}
@@ -295,14 +308,17 @@ func (r *corrida) copiar(ctx context.Context) error {
 		}
 	}
 
-	if restaurar {
+	switch {
+	case restaurar:
 		m, err := LerManifesto(r.e.DumpDir)
 		if err != nil {
 			return err
 		}
 		r.trabalho, r.linhasOrigem, r.formato = r.e.DumpDir, m.Linhas, m.Formato
 		d.logf("restaurando o dump guardado em %s (de %s)", r.e.DumpDir, m.Inicio.Format("02/01/2006 15:04"))
-	} else {
+	case arquivo:
+		d.logf("restaurando o arquivo %s (%s, %s; %s)", p.Arquivo.Caminho, p.Arquivo.Formato, Tamanho(p.Arquivo.Tamanho), p.Arquivo.Origem())
+	default:
 		r.etapa("Dump")
 		if p.Perfil.Retomavel {
 			r.formato = FormatoBlocos
@@ -327,7 +343,12 @@ func (r *corrida) copiar(ctx context.Context) error {
 	defer r.soltarRole()
 
 	r.etapa("Restore")
-	erros, err := r.restore(ctx)
+	var erros int
+	if arquivo {
+		erros, err = r.restoreArquivo(ctx)
+	} else {
+		erros, err = r.restore(ctx)
+	}
 	if err != nil {
 		return err
 	}
@@ -335,10 +356,13 @@ func (r *corrida) copiar(ctx context.Context) error {
 		return err
 	}
 
-	r.etapa("Conferência")
-	difs, err := r.conferir(ctx)
-	if err != nil {
-		return err
+	// Um arquivo de fora não traz a contagem da origem: não há com o que conferir.
+	var difs []string
+	if !arquivo {
+		r.etapa("Conferência")
+		if difs, err = r.conferir(ctx); err != nil {
+			return err
+		}
 	}
 
 	if p.Perfil.Script != "" {
@@ -393,8 +417,11 @@ func (r *corrida) copiar(ctx context.Context) error {
 		return err
 	}
 	r.e.Mensagem = fmt.Sprintf("%s copiado de %s/%s", p.Destino.Banco, p.Origem.Conexao, p.Origem.Banco)
-	if restaurar {
+	switch {
+	case restaurar:
 		r.e.Mensagem = fmt.Sprintf("%s restaurado do dump de %s", p.Destino.Banco, filepath.Base(r.e.DumpDir))
+	case arquivo:
+		r.e.Mensagem = fmt.Sprintf("%s restaurado do arquivo %s", p.Destino.Banco, filepath.Base(p.Arquivo.Caminho))
 	}
 	if ant != "" {
 		r.e.Mensagem += "; o banco substituído ficou como " + ant
@@ -451,6 +478,11 @@ func (r *corrida) apagarAnteriores(ctx context.Context) error {
 
 // rodar roda um cliente na imagem do plano, com o trabalho, o pgpass e os sockets montados.
 func (r *corrida) rodar(ctx context.Context, sufixo string, comando []string, extra []imagens.Volume, amb map[string]string, linha func(fluxo, texto string)) (int, []string, error) {
+	return r.rodarCom(ctx, sufixo, comando, extra, amb, nil, linha)
+}
+
+// rodarCom é o rodar com uma entrada padrão para o cliente (o SQL de um arquivo, para o psql).
+func (r *corrida) rodarCom(ctx context.Context, sufixo string, comando []string, extra []imagens.Volume, amb map[string]string, entrada io.Reader, linha func(fluxo, texto string)) (int, []string, error) {
 	vols := []imagens.Volume{{Origem: r.pgpass, Destino: dentroPgpass, SoLeitura: true}}
 	if r.trabalho != "" {
 		vols = append(vols, imagens.Volume{Origem: r.trabalho, Destino: dentroTrabalho})
@@ -469,7 +501,7 @@ func (r *corrida) rodar(ctx context.Context, sufixo string, comando []string, ex
 		// O nome leva a instância: duas instalações no mesmo Docker têm, cada uma, a sua execução 1.
 		Imagem: r.p.ImagemRef, Nome: fmt.Sprintf("pghangar-%s-%d-%s", r.instancia(), r.e.ID, sufixo),
 		Rotulos: map[string]string{imagens.Rotulo: strconv.FormatInt(r.e.ID, 10), imagens.RotuloInstancia: r.instancia()},
-		Volumes: vols, Ambiente: env, Comando: comando,
+		Volumes: vols, Ambiente: env, Comando: comando, Entrada: entrada,
 	}
 	r.d.logf("$ docker %s", strings.Join(e.Args(), " "))
 	var ultimas []string
@@ -790,10 +822,16 @@ func (r *corrida) restore(ctx context.Context) (int, error) {
 	if r.formato == FormatoBlocos {
 		return r.restoreBlocos(ctx)
 	}
+	return r.pgRestore(ctx, dentroTrabalho+"/dump", r.p.Perfil.JobsRestore, nil)
+}
+
+// pgRestore restaura um dump (o caminho é o de dentro do container) no __novo, com a role
+// temporária. extra são os volumes que o montam, quando ele não está no trabalho.
+func (r *corrida) pgRestore(ctx context.Context, fonte string, jobs int, extra []imagens.Volume) (int, error) {
 	p := r.p
 	// O total vem do índice do dump.
 	total := 0
-	cod, ultimas, err := r.rodar(ctx, "lista", []string{"pg_restore", "--list", dentroTrabalho + "/dump"}, nil, nil, func(fluxo, t string) {
+	cod, ultimas, err := r.rodar(ctx, "lista", []string{"pg_restore", "--list", fonte}, extra, nil, func(fluxo, t string) {
 		if fluxo == "saida" && t != "" && !strings.HasPrefix(t, ";") {
 			total++
 		}
@@ -804,16 +842,16 @@ func (r *corrida) restore(ctx context.Context) (int, error) {
 	if cod != 0 {
 		return 0, falhaCliente("o pg_restore --list", cod, ultimas)
 	}
-	args := []string{fmt.Sprintf("--jobs=%d", p.Perfil.JobsRestore), "--verbose", "--no-owner", "--no-privileges",
+	args := []string{fmt.Sprintf("--jobs=%d", jobs), "--verbose", "--no-owner", "--no-privileges",
 		"--no-tablespaces", "--no-subscriptions", "--no-publications", "--role=" + r.role,
-		"--dbname=" + conexao.DSN(r.destino.c, r.destino.ponte, r.e.BancoNovo, "pghangar"), dentroTrabalho + "/dump"}
+		"--dbname=" + conexao.DSN(r.destino.c, r.destino.ponte, r.e.BancoNovo, "pghangar"), fonte}
 	if err := versoes.Conferir("pg_restore", args, p.Imagem); err != nil {
 		return 0, err
 	}
 	ignorados := -1
 	vistos := map[string]bool{}
 	var erros []string
-	cod, ultimas, err = r.rodar(ctx, "restore", append([]string{"pg_restore"}, args...), nil, nil, func(_, t string) {
+	cod, ultimas, err = r.rodar(ctx, "restore", append([]string{"pg_restore"}, args...), extra, nil, func(_, t string) {
 		if mm := reRestoreItem.FindStringSubmatch(t); mm != nil && !vistos[mm[1]] {
 			vistos[mm[1]] = true
 			r.progresso(min(len(vistos), max(total, 1)), max(total, 1), mm[2], false)

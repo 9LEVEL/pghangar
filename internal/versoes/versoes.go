@@ -118,6 +118,7 @@ var Opcoes = []Opcao{
 	{"vacuumdb", "--jobs", 9},
 	{"vacuumdb", "--dbname", 9},
 	{"psql", "--no-psqlrc", 9},
+	{"psql", "--quiet", 9},
 	{"psql", "--set=ON_ERROR_STOP=1", 9},
 	{"psql", "--single-transaction", 9},
 	{"psql", "--file", 9},

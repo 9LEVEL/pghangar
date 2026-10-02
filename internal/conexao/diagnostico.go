@@ -237,8 +237,18 @@ func Bancos(ctx context.Context, conn *pgx.Conn, versao int) ([]cadastro.Banco, 
 	return bs, rows.Err()
 }
 
+// BancoModelo lê o template1: o locale e a codificação que um banco criado sem opções teria.
+func BancoModelo(ctx context.Context, conn *pgx.Conn, versao int) (cadastro.Banco, error) {
+	var b cadastro.Banco
+	err := conn.QueryRow(ctx, consultaBancos(versao, "d.datname = 'template1'")).
+		Scan(&b.Nome, &b.Tamanho, &b.Dono, &b.Codificacao, &b.Collate, &b.Ctype, &b.Provedor, &b.Locale, &b.RegrasICU, &b.Conexoes)
+	return b, err
+}
+
 // ConsultaBancos é a consulta dos bancos para a versão do servidor.
-func ConsultaBancos(versao int) string {
+func ConsultaBancos(versao int) string { return consultaBancos(versao, "NOT d.datistemplate") }
+
+func consultaBancos(versao int, onde string) string {
 	provedor, locale, regras := "'c'", "''", "''"
 	switch {
 	case versao >= 170000:
@@ -250,7 +260,7 @@ func ConsultaBancos(versao int) string {
 	}
 	return `SELECT d.datname, pg_database_size(d.oid), pg_get_userbyid(d.datdba), pg_encoding_to_char(d.encoding),
 		d.datcollate, d.datctype, ` + provedor + `, ` + locale + `, ` + regras + `, d.datallowconn
-		FROM pg_database d WHERE NOT d.datistemplate ORDER BY d.datname`
+		FROM pg_database d WHERE ` + onde + ` ORDER BY d.datname`
 }
 
 func resolver(ctx context.Context, host string) error {

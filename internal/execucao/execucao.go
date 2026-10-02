@@ -70,6 +70,8 @@ func (l Lancador) Iniciar(ctx context.Context, p Pedido) (int64, error) {
 		tipo = cadastro.TipoRestauracao
 	case pl.Reset:
 		tipo = cadastro.TipoReset
+	case pl.Arquivo != nil:
+		tipo = cadastro.TipoArquivo
 	}
 	id, err := l.Cadastro.NovaExecucao(ctx, cadastro.Execucao{
 		Perfil: pl.Perfil.Nome, Tipo: tipo, Estado: cadastro.EstadoIniciando,
@@ -333,9 +335,25 @@ func processoDe(e cadastro.Execucao) bool {
 	if processoDaExecucao(e.PID, e.ID) {
 		return true
 	}
-	// O pghangar rodar (o cron) roda a cópia no próprio processo: o perfil é o último argumento.
+	// O pghangar rodar (o cron) roda a cópia no próprio processo: o perfil é o último argumento. O
+	// pghangar restaurar também: um dos argumentos é o arquivo, e o "perfil" da execução é o nome dele.
 	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", e.PID))
-	return err == nil && bytes.Contains(b, []byte("\x00rodar\x00")) && bytes.HasSuffix(b, []byte("\x00"+e.Perfil+"\x00"))
+	if err != nil {
+		return false
+	}
+	args := bytes.Split(bytes.TrimSuffix(b, []byte{0}), []byte{0})
+	if e.Tipo == cadastro.TipoArquivo {
+		if len(args) < 2 || string(args[1]) != "restaurar" {
+			return false
+		}
+		for _, a := range args[2:] {
+			if filepath.Base(string(a)) == e.Perfil {
+				return true
+			}
+		}
+		return false
+	}
+	return bytes.Contains(b, []byte("\x00rodar\x00")) && bytes.HasSuffix(b, []byte("\x00"+e.Perfil+"\x00"))
 }
 
 // processoDaExecucao confere pelo /proc que o pid é mesmo o "executar" daquela execução: um pid

@@ -175,6 +175,9 @@ func (a *abaAmbiente) tecla(m *Model, k tea.KeyMsg) tea.Cmd {
 }
 
 func execucaoRodando(m *Model, id string) bool {
+	if id == imagens.RotuloPlano {
+		return true // o pg_restore --list de um plano: termina sozinho em instantes
+	}
 	for _, e := range m.execucoes {
 		if strconv.FormatInt(e.ID, 10) == id && !e.Terminou() {
 			return true

@@ -59,6 +59,8 @@ type Model struct {
 	ajudaVP viewport.Model
 	status  string
 	ocupado string // a tarefa em andamento, no rodapé
+	// cancelarTarefa para a tarefa em andamento, se ela aceita (o esc).
+	cancelarTarefa context.CancelFunc
 
 	form  formulario
 	conf  confirmacao
@@ -176,6 +178,10 @@ type tarefa struct {
 	rotulo string
 	rodar  func(ctx context.Context, seg conexao.Segredos) (any, error)
 	pronto func(m *Model, v any, err error) tea.Cmd
+	// prazo é o tempo máximo dela (0 é 5 minutos). cancelavel deixa o esc pará-la: a leitura de um
+	// SQL grande antes do plano.
+	prazo      time.Duration
+	cancelavel bool
 }
 
 type msgTarefa struct {
@@ -193,8 +199,16 @@ func (m *Model) executar(t *tarefa) tea.Cmd {
 	}
 	m.ocupado = t.rotulo
 	seg := copiar(m.seg)
+	prazo := t.prazo
+	if prazo == 0 {
+		prazo = 5 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), prazo)
+	m.cancelarTarefa = nil
+	if t.cancelavel {
+		m.cancelarTarefa = cancel
+	}
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		v, err := t.rodar(ctx, seg)
 		return msgTarefa{t: t, v: v, err: err}
@@ -312,7 +326,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgTique:
 		return m, m.tiquetaque()
 	case msgTarefa:
-		m.ocupado = ""
+		m.ocupado, m.cancelarTarefa = "", nil
 		if p := perguntaDe(msg.err); p != nil {
 			// Com outra janela aberta, a pergunta (a chave de um servidor SSH, uma senha) não abre
 			// por cima: as teclas dadas para a janela responderiam a ela.
@@ -461,6 +475,12 @@ func (m *Model) tecla(k tea.KeyMsg) tea.Cmd {
 	}
 
 	switch k.String() {
+	case "esc":
+		if m.ocupado != "" && m.cancelarTarefa != nil {
+			m.cancelarTarefa()
+			m.status = "cancelando: " + m.ocupado
+			return nil
+		}
 	case "q":
 		return tea.Quit
 	case "?":
@@ -500,7 +520,7 @@ func (m *Model) entrarNaAba() tea.Cmd {
 	case AbaDumps:
 		return m.dumpsA.carregar(m)
 	case AbaAnteriores:
-		if !m.anterioresA.carregado {
+		if !m.anterioresA.carregado || m.anterioresA.mudaram(m) {
 			return m.anterioresA.carregar(m)
 		}
 	case AbaAmbiente:
@@ -620,7 +640,11 @@ var quadros = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "
 
 func (m *Model) rodape() string {
 	if m.ocupado != "" {
-		return truncar(stSelecao.Render(quadros[m.quadro%len(quadros)]+" "+m.ocupado+"…"), m.largura)
+		t := stSelecao.Render(quadros[m.quadro%len(quadros)] + " " + m.ocupado + "…")
+		if m.cancelarTarefa != nil {
+			t += stDica.Render("  esc cancela")
+		}
+		return truncar(t, m.largura)
 	}
 	if m.status != "" {
 		return truncar(stStatus.Render(m.status), m.largura)
@@ -634,7 +658,7 @@ func (m *Model) rodape() string {
 	case AbaConexoes:
 		daAba = juntarDicas(dica("a", "adicionar"), dica("e", "editar"), dica("t", "testar"), dica("v", "aprovar destino"), dica("b", "bancos"), dica("d", "remover"))
 	case AbaDumps:
-		daAba = juntarDicas(dica("↑↓", "escolher"), dica("r", "restaurar de novo"), dica("d", "apagar"), dica("R", "recarregar"))
+		daAba = juntarDicas(dica("↑↓", "escolher"), dica("r", "restaurar"), dica("d", "apagar"), dica("R", "recarregar"))
 	case AbaAnteriores:
 		daAba = juntarDicas(dica("u", "desfazer"), dica("d", "apagar"), dica("r", "recarregar"))
 	case AbaAmbiente:
@@ -671,9 +695,10 @@ var atalhos = [][2]string{
 	{"v", "aprovar (ou revogar) o servidor como destino de cópias: sem aprovação, nenhuma cópia escreve nele"},
 	{"", ""},
 	{"4 Dumps", ""},
-	{"r", "restaurar o dump de novo no destino do perfil, sem ir à origem (mesmo plano e mesma confirmação da cópia)"},
-	{"d", "apagar um dump (nada é apagado sozinho)"},
-	{"R", "ler os dumps de novo"},
+	{"r", "num arquivo da pasta de entrada: restaurá-lo num banco de uma conexão dev ou homolog (o banco que estiver lá vira __anterior)"},
+	{"", "num dump guardado: restaurá-lo de novo no destino do perfil, sem ir à origem (mesmo plano e mesma confirmação da cópia)"},
+	{"d", "apagar um arquivo da entrada ou um dump (nada é apagado sozinho)"},
+	{"R", "ler a pasta de entrada e os dumps de novo"},
 	{"", ""},
 	{"5 Anteriores", ""},
 	{"u", "desfazer: o anterior volta a ser o banco, e o atual também vira anterior"},

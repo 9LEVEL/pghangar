@@ -11,7 +11,7 @@ O nome: o hangar é onde o avião fica guardado e é preparado para voar, ao lad
 > **Estado: fases 1, 2 e 3 prontas** (docs/ESTRATEGIA.md §16), testadas em localhost: matriz
 > 16/17/18, túnel SSH (e bastion), link instável retomável, grupos, base e reset, processo separado,
 > cancelamento e processo morto. Em uso contra um servidor real desde 2026-09-30 (a produção por
-> túnel SSH com TLS, para um dev).
+> túnel SSH com TLS, para um dev). Também restaura um arquivo de fora num dev ou homolog (§17).
 
 | | |
 |---|---|
@@ -73,6 +73,20 @@ OnCalendar=*-*-* 03:30
 [Install]
 WantedBy=timers.target
 ```
+
+## Restaurar um arquivo de fora
+
+Um backup, ou um dump que alguém mandou, vira um banco de dev ou homolog sem `pg_restore` à mão:
+
+```bash
+sudo mv loja_20261001.dump /var/lib/pghangar/entrada/
+sudo pghangar      # aba 4: r no arquivo, escolha a conexão e o banco, confirme
+sudo pghangar restaurar --destino dev --banco loja loja_20261001.dump   # ou sem a tela
+```
+
+Aceita os formatos do `pg_dump` (custom, tar e diretório) e SQL puro (`.sql`, `.sql.gz`). O banco que
+estava lá vira `__anterior`, com desfazer, e o arquivo continua na pasta. Detalhes em
+docs/ESTRATEGIA.md §17.
 
 ## Testar
 

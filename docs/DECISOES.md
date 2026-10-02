@@ -129,7 +129,8 @@ pode ser atualizado entre duas cópias.
 **Decidido pelo assistente,** dentro do "siga as recomendações" do usuário. É a opção (b) da
 análise, recomendada desde a primeira resposta. **O método (`--role=<dono>` e extensões criadas
 antes) foi SUBSTITUÍDO** pela entrada "O restore roda com uma role temporária", logo abaixo; o
-resultado (tudo com o dono do destino) continua.
+resultado (tudo com o dono do destino) continua. **Exceção (2026-10-02):** o SQL puro de um arquivo
+de fora mantém os donos e as permissões que o arquivo traz (entrada "Restaurar um arquivo de fora").
 
 **Decidido:** o restore usa `--no-owner --no-privileges --role=<dono do destino>`. As extensões
 são criadas antes, pelo superusuário. Assinaturas, publicações e tablespaces da produção não vão
@@ -600,3 +601,95 @@ o processo, e a documentação contra o código. Cada achado foi conferido no c�
 diferente do host cadastrado (falta um campo como o `sslrootcert`); certificados que o crypto/tls do
 Go recusa e o libpq aceita (só com CN, sem SAN); a tela do plano cortada num terminal de 80x24 com
 muitas correções e anteriores.
+
+## 2026-10-02: Restaurar um arquivo de fora, só em dev e homolog
+
+**Decisão do usuário.** Até aqui, a ferramenta só restaurava os dumps que ela mesma fez. Restaurar
+à mão um backup ou um arquivo que alguém mandou dava trabalho e não tinha as guardas de uma cópia.
+
+**Decidido** (docs/ESTRATEGIA.md §17):
+- **O arquivo fica numa pasta de entrada fixa,** `/var/lib/pghangar/entrada` (`700`, do root),
+  listada na aba 4. Fora dela, o arquivo não é aceito; um link posto lá dentro vale, e é seguido
+  (quem cria o link é o root). Ele só é lido: nunca é alterado nem apagado sozinho, e sai pela aba
+  4 (`d`), com pergunta, e não enquanto uma restauração o usa.
+- **O destino é qualquer banco de uma conexão dev ou homolog,** com as guardas de uma cópia: a tag e
+  o servidor da produção, a aprovação do servidor, a trava, o superusuário, a réplica, o banco
+  administrativo e os templates. Um nome com a forma de um banco da ferramenta (`__novo`,
+  `__anterior`, `__base`) é recusado. Num homolog, a confirmação é o nome do banco digitado.
+- **Daí em diante, é uma cópia:** o `__novo` com a role temporária, os donos, as configurações do
+  banco de agora, o ANALYZE e a troca. O banco que estava lá vira `__anterior`, com desfazer. Um
+  restore com erro espera a decisão.
+- **Os formatos, pelo conteúdo e não pela extensão:** custom, tar e diretório pelo `pg_restore`
+  (`--no-owner --no-privileges`, em paralelo no custom e no diretório), e SQL puro (`.sql`, `.sql.gz`)
+  pelo `psql`. O zstd, o bzip2, o xz e o zip pedem para descomprimir antes.
+- **A versão vem do cabeçalho:** a imagem é a maior entre a do arquivo (o servidor de onde ele veio
+  e o `pg_dump` que o gerou) e a do destino. Descer é bloqueado. Um SQL sem cabeçalho usa a do
+  destino, com aviso.
+- **O SQL puro é lido antes do plano, e de novo no restore, comando a comando** (o texto entre dois
+  `;` de fora de string, de `$$` e de comentário: um comando pode ocupar várias linhas, e uma linha
+  pode ter vários), acompanhando os blocos de `COPY` (o corpo de uma função pode ter um `CREATE
+  ROLE`, e os dados, qualquer texto):
+  - **recusado:** o que sai do banco restaurado (roles, tablespaces, `ALTER SYSTEM`,
+    `REASSIGN`/`DROP OWNED`, `LOAD`, `COPY … PROGRAM`, um segundo banco) e qualquer comando do
+    `psql`, em qualquer lugar da linha, porque rodaria no container. Passam só o
+    `\restrict`/`\unrestrict` do pg_dump e o `\connect` do banco de um `-C`, na forma exata e
+    sozinhos na linha. O plano mostra a linha; no restore, o comando recusado para tudo;
+  - **pulado:** os comandos do próprio banco de um `pg_dump -C` (`CREATE`/`DROP`/`ALTER DATABASE`,
+    `\connect`, `GRANT … ON DATABASE`, `COMMENT ON DATABASE`), as subscriptions e as publications
+    (como no `--no-subscriptions`/`--no-publications` do pg_restore). Viram espaços, inteiros, e o
+    número das linhas nos erros continua o do arquivo;
+  - **um arquivo cortado** (um `COPY` sem o `\.`, uma string aberta no fim, um dump do pg_dump sem a
+    linha final) é bloqueado no plano, e no restore para antes da troca;
+  - os donos e as permissões vêm do arquivo como estão, como num restore à mão: uma role que não
+    existe vira erro, e a troca espera a decisão. Os erros são contados com as mensagens do servidor
+    em inglês (`lc_messages=C`): num servidor em português, o "ERRO" não seria contado.
+- **As extensões que o arquivo cria** (do índice do `pg_restore --list`, ou dos `CREATE EXTENSION`
+  do SQL) precisam estar disponíveis no destino. Senão, bloqueia.
+- **As correções:** a do `__novo` que sobrou e a dos user mappings (desmarcada, como numa cópia; os
+  servidores vêm do índice ou dos `CREATE USER MAPPING`). A das roles citadas pela RLS não: o
+  arquivo não diz quais são, e a role que faltar vira erro no restore.
+- **O arquivo confirmado é o que roda:** a execução confere o formato, o tamanho, a data, o inode e
+  o ctime (reescrever o conteúdo e repor a data com `touch` muda o ctime). Ela não lê o arquivo de
+  novo antes do restore: o que a leitura do plano achou vem do plano confirmado.
+- **Sem a tela:** `pghangar restaurar --destino C --banco B ARQUIVO`, com as regras do `rodar` (não
+  pergunta, nenhuma correção, `--confirmar` num homolog, e as mesmas saídas).
+- **A aba 5 mostra os bancos onde uma restauração de arquivo escreveu** (as que criaram o `__novo`),
+  além dos destinos dos perfis: o `__anterior` deles se desfaz ou apaga por lá.
+
+**Por quê:**
+- **A pasta fixa**, e não um caminho qualquer: o arquivo fica num lugar só do root, e a aba o mostra
+  sem ninguém digitar caminho.
+- **O `__novo` e a troca**, e não um restore direto no banco: o que estava lá não se perde, e um
+  restore pela metade nunca vira o banco de destino.
+- **A leitura do SQL:** um SQL roda o que tiver dentro. Os comandos do servidor e do `psql` não têm
+  lugar no restore de um banco, e um `-C` sem o pulo escreveria no banco vivo de mesmo nome (o
+  `\connect` levaria o resto do arquivo para lá).
+- **O arquivo roda com superusuário no destino,** como num restore à mão: o plano lembra de
+  restaurar só arquivos de fonte confiável. A leitura do SQL não é um sandbox; ela tira o que não
+  tem lugar num dump de um banco.
+
+**Ficou de fora:** buscar o arquivo em outro servidor por SSH; o zstd e os outros compressores; a
+conferência com a origem (o arquivo não traz a contagem dela); o `dblink` e o `postgres_fdw` de um
+SQL que escrevam em outro banco (não é um sandbox).
+
+**A revisão adversarial (2026-10-02)**, com três agentes (o SQL, o motor e a tela com os
+documentos), mudou, antes de fechar:
+- **a conferência passou de linha a comando.** Por linha, o segundo comando de uma linha
+  (`SELECT 1; CREATE ROLE x`), um `\c` depois de um `;`, um BOM antes do comando e a cauda de um
+  `\unrestrict` passavam. Agora cada comando é conferido, qualquer `\` fora de string é recusado,
+  o BOM sai, e o `\restrict` e o `\connect` só passam na forma exata;
+- **os erros do psql vêm em inglês** (`lc_messages=C`): com o servidor em pt_BR, a contagem zerava e
+  a troca acontecia sozinha;
+- **um SQL cortado não troca;** um `.tar.gz` ou um custom comprimido de novo não vão ao psql como
+  texto;
+- **os user mappings e as subscriptions** têm as guardas de uma cópia;
+- **a identidade do arquivo** inclui o inode e o ctime; um nome oculto e `--jobs` fora de 1 a 32 são
+  recusados; o container do `--list` roda sem rede e não aparece como órfão; o arquivo é montado com
+  `--mount` (se sumir, o docker falha, em vez de criar um diretório vazio no lugar);
+- **o banco que é origem de um perfil** dá um aviso (a troca derruba o dump dele);
+- **a leitura de um SQL grande** acontece antes de abrir o destino, sem o prazo de 5 minutos das
+  tarefas da tela, e o esc a cancela;
+- **a tela:** o formulário não se perde com outra tarefa rodando; o cartão cabe em 80x24; a
+  sugestão de banco não marca uma etiqueta vazia, nem o `postgres` ou um template; um arquivo em uso
+  não se apaga; a seleção fica no mesmo item ao ler de novo; os textos dizem "restauração" e
+  "reset" onde não é cópia; renomear um perfil não leva as execuções de arquivo de mesmo nome.
