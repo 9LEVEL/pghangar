@@ -693,3 +693,31 @@ documentos), mudou, antes de fechar:
   sugestão de banco não marca uma etiqueta vazia, nem o `postgres` ou um template; um arquivo em uso
   não se apaga; a seleção fica no mesmo item ao ler de novo; os textos dizem "restauração" e
   "reset" onde não é cópia; renomear um perfil não leva as execuções de arquivo de mesmo nome.
+
+## 2026-10-03: O repositório abre, com a licença MIT e o instalador em /install
+
+**Decisão do usuário.** O produto está maduro, e o repositório passa a ser público, como o do pgtower.
+
+**Decidido:**
+- **A licença é a MIT** (a mesma do pgtower e do site), e o **[`TRADEMARKS.md`](../TRADEMARKS.md)**
+  reserva o nome e o logo do pghangar e da 9Level. Junto, o `SECURITY.md` (relato em particular pelo
+  GitHub) e o `CONTRIBUTING.md`, no modelo do pgtower, em português.
+- **O instalador é `curl -fsSL https://pghangar.dev/install | sudo sh`,** e não mais o `/download` (que
+  continua, para quem já o usa). O `install.sh` acha a última release, **confere o SHA-256 e recusa
+  instalar sem ele**, e põe o binário em `/opt/pghangar` e `/usr/local/bin`, como o `make instalar`.
+  Avisa se falta o Docker. Os nomes dos arquivos da release não mudam: o pgrunway os usa.
+- **O README continua em português,** como tudo no projeto e no site, com o logo, os selos (CI,
+  release, licença) e uma tela real da demonstração.
+- **O CI** (GitHub Actions) roda o gofmt, o go vet (com a tag de integração) e os testes unitários. Os
+  de integração precisam das imagens e de root, e rodam na máquina de quem muda o motor.
+- **Os commits, daqui em diante, sem a linha `Co-Authored-By: Claude`,** como nos outros repositórios
+  da 9Level. Os oito commits até a v0.4.0 a têm; tirá-la reescreveria o histórico e as tags e releases
+  assinadas, e ficou como está.
+
+**Por quê:** a página do site já dizia MIT e mandava instalar pelo GitHub, mas, com o repositório
+privado, o código não tinha licença e o download dava 404. O `/install` confere o binário antes de
+instalá-lo, e o `/download` só o baixava.
+
+**O histórico foi varrido antes de abrir:** nenhum host, IP, usuário, senha ou nome de banco de um
+servidor real em nenhum commit. Os dumps de `internal/motor/testdata` vêm de um container vazio, sem
+senha.

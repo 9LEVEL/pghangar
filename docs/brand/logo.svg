@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="pghangar">
+  <rect width="64" height="64" rx="15" fill="#5A4A94"/>
+  <path d="M12 47V33.5C12 22.7 21 14 32 14s20 8.7 20 19.5V47z" fill="#fff"/>
+  <path d="M22.5 47V33.2h19V47z" fill="#5A4A94"/>
+  <g stroke="#fff" stroke-width="1.6"><path d="M26.3 33.2V47M30.1 33.2V47M33.9 33.2V47M37.7 33.2V47"/></g>
+  <circle cx="32" cy="24.2" r="2.9" fill="#F4B04A"/>
+  <rect x="9.5" y="49.5" width="45" height="3.6" rx="1.8" fill="#fff"/>
+</svg>

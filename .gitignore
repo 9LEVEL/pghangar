@@ -1,5 +1,6 @@
 # artefatos
 /bin/
+/dist/
 /pghangar
 
 # segredos e dados: nunca versionar
